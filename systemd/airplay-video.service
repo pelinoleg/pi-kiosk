@@ -17,7 +17,20 @@ Environment="AIRPLAY_VIDEO_PORT=35000"
 EnvironmentFile=-/etc/kiosk/kiosk.env
 # -nh keeps the hostname off the advertised name, -fs draws fullscreen.
 # The port matters: uxplay's own default is 7000, which the control API owns.
-ExecStart=/usr/bin/uxplay -n "${AIRPLAY_NAME}" -nh -fs -p ${AIRPLAY_VIDEO_PORT}
+#
+# -nohold is not optional on a kiosk. Without it uxplay keeps whichever client
+# connected first and refuses every other one, so a phone that dropped off
+# without closing cleanly leaves a stale connection that locks the device out
+# for everybody, indefinitely.
+#
+# -reset 2 gives up after ~6s of client silence, which is what actually clears
+# such a connection; the default of 5 means 15s.
+#
+# stdbuf keeps uxplay's output line-buffered - it writes to a pipe under
+# systemd, so without this its messages sit in libc's buffer and a whole
+# session can pass without a single line reaching the journal.
+ExecStart=/usr/bin/stdbuf -oL -eL /usr/bin/uxplay -n "${AIRPLAY_NAME}" -nh -fs \
+    -p ${AIRPLAY_VIDEO_PORT} -nohold -reset 2
 Restart=always
 RestartSec=5
 
