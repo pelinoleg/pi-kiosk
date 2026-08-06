@@ -16,6 +16,11 @@ EnvironmentFile=-/etc/kiosk/kiosk.env
 ExecStart=__INSTALL_DIR__/start-surface-api.sh
 Restart=always
 RestartSec=10
+# The API launches Chromium as a child, so with the default control-group
+# kill mode every service restart (installer re-run, output switch, crash
+# recovery) silently takes the browser down with it and leaves a black
+# screen. Kill only the API itself; chrome-tabs reaps stale browsers anyway.
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
