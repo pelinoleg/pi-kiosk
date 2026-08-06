@@ -1,0 +1,9 @@
+[Unit]
+Description=Turn the kiosk panel off
+
+[Service]
+Type=oneshot
+User=__USER__
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=__HOME__/.Xauthority"
+ExecStart=/usr/local/bin/kiosk-display.sh off

@@ -84,6 +84,8 @@ curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh 
 | `AIRPLAY` | `1` | `0` — не ставить AirPlay-приёмники |
 | `AIRPLAY_NAME` | имя хоста | как устройство называется в списке AirPlay на iOS |
 | `AIRPLAY_VIDEO_PORT` | `35000` | порт uxplay (его собственный дефолт 7000 занят API) |
+| `DISPLAY_OFF_AT` | пусто | во сколько гасить экран, `ЧЧ:ММ` |
+| `DISPLAY_ON_AT` | пусто | во сколько включать обратно, `ЧЧ:ММ` |
 | `GITHUB_TOKEN` | — | нужен только для приватного репозитория |
 
 Поменять потом можно в `/etc/kiosk/kiosk.env`, затем
@@ -101,6 +103,7 @@ curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh 
 | `kiosk-restore.service` | после загрузки возвращает картинку на экран |
 | `airplay-video.service` | приём AirPlay с iOS: повтор экрана, видео и звук (uxplay) |
 | `airplay-audio.service` | AirPlay-колонка, только звук (shairport-sync) |
+| `kiosk-display-off/on.timer` | гасит и включает экран по расписанию (если задано) |
 
 Пакеты: `xserver-xorg`, `xinit`, `openbox`, `unclutter`, `chromium`, `mpv`,
 `ffmpeg`, `mpg123`, `pulseaudio`, `alsa-utils`, `network-manager`, `python3-venv`.
@@ -157,6 +160,38 @@ curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh 
 `35000–35002` tcp+udp, `5000/tcp` и `6001–6011/udp`, `7000/udp`.
 
 Отключить: `AIRPLAY=0` при установке.
+
+### Гашение экрана
+
+Экран гасится по-настоящему — не чернотой, а снятием питания с подсветки.
+На DSI-панели `xrandr --output ... --off` переводит `bl_power` в `4`
+(`FB_BLANK_POWERDOWN`), плюс скрипт на всякий случай дожимает подсветку напрямую
+через `/sys/class/backlight/*/bl_power` — на случай панели, чей драйвер за
+`xrandr` не следует.
+
+Вручную в любой момент:
+
+```bash
+kiosk-display.sh off
+kiosk-display.sh on
+curl http://<ip>:7000/surface/display-off    # то же самое через API
+```
+
+По расписанию — задать оба времени при установке:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh \
+  | DISPLAY_OFF_AT=23:00 DISPLAY_ON_AT=07:00 bash
+```
+
+Расписание включается, только если заданы **оба** времени; иначе таймеры не
+ставятся вовсе. Менять потом — в `/etc/kiosk/kiosk.env`, но время попадает
+внутрь `OnCalendar` самих таймеров (systemd не умеет читать его из
+`EnvironmentFile`), поэтому после правки надо переустановить или поправить
+`/etc/systemd/system/kiosk-display-*.timer` руками.
+
+Пользователь киоска добавляется в группу `video` — иначе подсветкой не
+поуправлять без `sudo`.
 
 ### Восстановление экрана
 

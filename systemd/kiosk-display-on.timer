@@ -1,0 +1,9 @@
+[Unit]
+Description=Nightly schedule: panel on
+
+[Timer]
+OnCalendar=*-*-* __DISPLAY_ON_AT__:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

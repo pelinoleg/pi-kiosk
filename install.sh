@@ -14,6 +14,10 @@
 #   WIFI_IFACE    interface the watchdog nurses    (default wlan0, empty = wired)
 #   PROBE_HOSTS   LAN hosts that prove reachability (default the gateway only)
 #   AUTOLOGIN=1   also configure console autologin (default off)
+#   AIRPLAY       0 to skip the AirPlay receivers   (default 1)
+#   AIRPLAY_NAME  name iOS shows                    (default the hostname)
+#   HW_WATCHDOG   1 to arm the hardware watchdog    (default off, see README)
+#   DISPLAY_OFF_AT / DISPLAY_ON_AT   HH:MM to blank the panel overnight
 #   GITHUB_TOKEN  required only when the repo is private
 #   KIOSK_REPO    owner/name to fetch from         (default below)
 #   KIOSK_REF     branch or tag                    (default main)
@@ -109,6 +113,10 @@ sudo -u "$KIOSK_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_
 info "installing watchdog and restore scripts"
 sudo install -m 0755 "$SRC/scripts/net-watchdog.sh"  /usr/local/bin/net-watchdog.sh
 sudo install -m 0755 "$SRC/scripts/kiosk-restore.sh" /usr/local/bin/kiosk-restore.sh
+sudo install -m 0755 "$SRC/scripts/kiosk-display.sh" /usr/local/bin/kiosk-display.sh
+# Backlight files under /sys/class/backlight are owned by root:video, so the
+# panel can be dimmed without sudo once the kiosk user is in that group.
+sudo usermod -aG video "$KIOSK_USER" 2>/dev/null || true
 sudo mkdir -p /var/lib/kiosk
 sudo touch /var/log/kiosk.log
 
@@ -138,6 +146,8 @@ else
     sudo sed -i "s|^COMBO_URL=.*|COMBO_URL=${COMBO_URL:-}|" /etc/kiosk/kiosk.env
     sudo sed -i "s|^WIFI_IFACE=.*|WIFI_IFACE=${IFACE}|" /etc/kiosk/kiosk.env
     sudo sed -i "s|^PROBE_HOSTS=.*|PROBE_HOSTS=\"${PROBE_HOSTS:-$GW}\"|" /etc/kiosk/kiosk.env
+    sudo sed -i "s|^DISPLAY_OFF_AT=.*|DISPLAY_OFF_AT=${DISPLAY_OFF_AT:-}|" /etc/kiosk/kiosk.env
+    sudo sed -i "s|^DISPLAY_ON_AT=.*|DISPLAY_ON_AT=${DISPLAY_ON_AT:-}|" /etc/kiosk/kiosk.env
 fi
 
 info "installing the X session"
@@ -159,14 +169,32 @@ EOF
 
 # ------------------------------------------------------------------- systemd --
 info "installing systemd units"
+# Times for the panel schedule come from the environment or an existing config;
+# systemd cannot read OnCalendar from an EnvironmentFile, so they are baked in.
+DISPLAY_OFF_AT="${DISPLAY_OFF_AT-$(sed -n 's/^DISPLAY_OFF_AT=//p' /etc/kiosk/kiosk.env 2>/dev/null)}"
+DISPLAY_ON_AT="${DISPLAY_ON_AT-$(sed -n 's/^DISPLAY_ON_AT=//p' /etc/kiosk/kiosk.env 2>/dev/null)}"
+
 render() {
     sed -e "s|__USER__|$KIOSK_USER|g" \
         -e "s|__HOME__|$KIOSK_HOME|g" \
         -e "s|__UID__|$KIOSK_UID|g" \
         -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+        -e "s|__DISPLAY_OFF_AT__|${DISPLAY_OFF_AT}|g" \
+        -e "s|__DISPLAY_ON_AT__|${DISPLAY_ON_AT}|g" \
         "$1" | sudo tee "/etc/systemd/system/$(basename "$1")" >/dev/null
 }
 for u in "$SRC"/systemd/*.service "$SRC"/systemd/*.timer; do render "$u"; done
+
+# An unset time would leave OnCalendar as a literal placeholder, which systemd
+# rejects - so the schedule is only armed when both ends are actually set.
+if [ -n "$DISPLAY_OFF_AT" ] && [ -n "$DISPLAY_ON_AT" ]; then
+    info "panel schedule: off at $DISPLAY_OFF_AT, on at $DISPLAY_ON_AT"
+    SCHEDULE=1
+else
+    sudo rm -f /etc/systemd/system/kiosk-display-off.timer \
+               /etc/systemd/system/kiosk-display-on.timer
+    SCHEDULE=0
+fi
 
 # A zero-length unit file is reported by systemd as "masked", with no error at
 # all. That is exactly what an unclean shutdown mid-install leaves behind, so
@@ -288,6 +316,10 @@ sudo systemctl enable --now xinit.service        >/dev/null 2>&1 || warn "xinit 
 sudo systemctl enable --now surface-api.service  >/dev/null 2>&1 || warn "surface-api failed to start"
 sudo systemctl enable --now net-watchdog.timer   >/dev/null 2>&1 || warn "watchdog timer failed to start"
 sudo systemctl enable kiosk-restore.service      >/dev/null 2>&1 || true
+if [ "${SCHEDULE:-0}" = "1" ]; then
+    sudo systemctl enable --now kiosk-display-off.timer >/dev/null 2>&1 || warn "panel off timer failed"
+    sudo systemctl enable --now kiosk-display-on.timer  >/dev/null 2>&1 || warn "panel on timer failed"
+fi
 if [ "${AIRPLAY_INSTALLED:-0}" = "1" ]; then
     sudo systemctl enable --now airplay-video.service >/dev/null 2>&1 || warn "airplay-video failed to start"
     sudo systemctl enable --now airplay-audio.service >/dev/null 2>&1 || warn "airplay-audio failed to start"
