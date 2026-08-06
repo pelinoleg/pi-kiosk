@@ -190,12 +190,28 @@ sudo tee /etc/logrotate.d/kiosk >/dev/null <<'EOF'
 }
 EOF
 
+# The BCM watchdog tops out around 15s of hardware timeout. Asking for more
+# than that made a Pi 4 reset itself every 30-90 seconds, with no panic and no
+# trace in the logs - and on boxes with log2ram the evidence is wiped by the
+# reset it caused. So this is opt-in, and clamped when it is on.
 sudo mkdir -p /etc/systemd/system.conf.d
-sudo tee /etc/systemd/system.conf.d/watchdog.conf >/dev/null <<'EOF'
+if [ "${HW_WATCHDOG:-0}" = "1" ]; then
+    HW_WATCHDOG_SEC="${HW_WATCHDOG_SEC:-14}"
+    [ "$HW_WATCHDOG_SEC" -gt 14 ] 2>/dev/null && HW_WATCHDOG_SEC=14
+    info "hardware watchdog on, ${HW_WATCHDOG_SEC}s"
+    sudo tee /etc/systemd/system.conf.d/watchdog.conf >/dev/null <<EOF
 [Manager]
-RuntimeWatchdogSec=20
+RuntimeWatchdogSec=${HW_WATCHDOG_SEC}
 RebootWatchdogSec=2min
 EOF
+else
+    sudo tee /etc/systemd/system.conf.d/watchdog.conf >/dev/null <<'EOF'
+# Hardware watchdog left off: values above ~15s make the BCM chip reset the
+# board spontaneously. Turn it on by reinstalling with HW_WATCHDOG=1.
+[Manager]
+RuntimeWatchdogSec=0
+EOF
+fi
 
 # comitup manages NetworkManager itself and drops to an access point on any
 # connectivity hiccup, which reads to a user as "it forgot my wifi". If it is
