@@ -242,13 +242,27 @@ GET  /surface/playback-toggle       /surface/playback-next    /surface/playback-
 GET  /surface/webcam                /surface/immich/album     /surface/reboot
 GET  /surface/airplay-state         /surface/airplay-on       /surface/airplay-off
 GET  /surface/airplay-kick
+GET  /surface/health                /surface/screenshot       /surface/logs
+GET  /surface/restore               /surface/remote
 POST /surface/custom-command        /surface/tts-play-upload
 ```
+
+`GET /` отдаёт полный список маршрутов — он собирается из приложения и не
+устаревает.
 
 AirPlay: `airplay-state` показывает состояние сервисов и адреса подключённых
 клиентов, `airplay-on`/`airplay-off` включают и выключают приём (при
 выключении киоск сам возвращается на экран), `airplay-kick` сбрасывает
 зависшего клиента перезапуском приёмника.
+
+Диагностика: `health` — всё состояние киоска одним JSON (юниты, дисплей,
+питание, температура, AirPlay); `screenshot` — PNG текущего экрана;
+`logs?lines=N` — хвост `/var/log/kiosk.log`; `restore` — вернуть на экран то,
+что киоск должен показывать.
+
+**Веб-пульт:** `http://<ip>:7000/surface/remote` — страница для телефона с
+кнопками поверх этих эндпоинтов: статус, скриншот, возврат киоска, AirPlay,
+экран, громкость, часы, лог, перезагрузка.
 
 Ротация вкладок: `urls` и `times` — параллельные списки, `times` в секундах.
 
