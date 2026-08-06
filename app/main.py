@@ -28,6 +28,41 @@ from fastapi import UploadFile, File, Form
 
 import pathlib
 
+
+def _detect_display_output() -> str:
+    """Name of the X output the kiosk draws on.
+
+    Hardcoding HDMI-1 breaks on any machine whose panel is called something
+    else - a DSI mini screen, or a second HDMI port - and the failure is quiet:
+    `xrandr --output {DISPLAY_OUTPUT} --auto` just returns non-zero, so display-on/off
+    report errors and any command chained after it with && never runs.
+    Override with DISPLAY_OUTPUT if detection picks the wrong one.
+    """
+    forced = os.environ.get("DISPLAY_OUTPUT")
+    if forced:
+        return forced
+    try:
+        out = subprocess.run(
+            "DISPLAY=:0 xrandr --query", shell=True,
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        connected = [
+            line.split()[0] for line in out.splitlines()
+            if " connected" in line and not line.startswith(" ")
+        ]
+        # Prefer an output that already has a mode set, else the first connected.
+        for line in out.splitlines():
+            if " connected" in line and re.search(r"\d+x\d+\+\d+\+\d+", line):
+                return line.split()[0]
+        if connected:
+            return connected[0]
+    except Exception:
+        pass
+    return "HDMI-1"
+
+
+DISPLAY_OUTPUT = _detect_display_output()
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -268,7 +303,7 @@ xset dpms force on
 xset s off
 xset s noblank
 xset dpms 0 0 0
-xrandr --output HDMI-1 --auto
+xrandr --output {DISPLAY_OUTPUT} --auto
 /usr/bin/chromium \\
     --kiosk \\
     --app=file://{html_path} \\
@@ -324,7 +359,7 @@ xset dpms force on
 xset s off
 xset s noblank
 xset dpms 0 0 0
-xrandr --output HDMI-1 --auto
+xrandr --output {DISPLAY_OUTPUT} --auto
 
 # Останавливаем предыдущие процессы плеера
 pkill -f vlc || echo "VLC не был запущен"
@@ -413,7 +448,7 @@ async def system_status():
     """Получение общего статуса системы"""
     try:
         # Состояние дисплея
-        display_state_cmd = "DISPLAY=:0 xrandr --query | grep '^HDMI-1'"
+        display_state_cmd = f"DISPLAY=:0 xrandr --query | grep '^{DISPLAY_OUTPUT}'"
         display_result = run_command(display_state_cmd)
         display_state = "on" if re.search(r"\d+x\d+\+\d+\+\d+", display_result["stdout"]) else "off"
 
@@ -480,7 +515,7 @@ async def get_system_processes():
 @app.get("/surface/display-state")
 async def get_display_state():
     """Получение текущего состояния дисплея"""
-    display_cmd = "DISPLAY=:0 xrandr --query | grep '^HDMI-1'"
+    display_cmd = f"DISPLAY=:0 xrandr --query | grep '^{DISPLAY_OUTPUT}'"
     result = run_command(display_cmd)
 
     if result["success"]:
@@ -494,7 +529,7 @@ async def get_display_state():
 @app.get("/surface/display-on")
 async def turn_display_on():
     """Включение дисплея"""
-    cmd = "export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output HDMI-1 --auto"
+    cmd = f"export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output {DISPLAY_OUTPUT} --auto"
     result = run_command(cmd)
 
     if result["success"]:
@@ -506,7 +541,7 @@ async def turn_display_on():
 @app.get("/surface/display-off")
 async def turn_display_off():
     """Выключение дисплея"""
-    cmd = "export DISPLAY=:0 && xrandr --output HDMI-1 --off"
+    cmd = f"export DISPLAY=:0 && xrandr --output {DISPLAY_OUTPUT} --off"
     result = run_command(cmd)
 
     if result["success"]:
@@ -1238,7 +1273,7 @@ xset dpms force on
 xset s off
 xset s noblank
 xset dpms 0 0 0
-xrandr --output HDMI-1 --auto
+xrandr --output {DISPLAY_OUTPUT} --auto
 /usr/bin/chromium \\
     --kiosk \\
     --app=file://{html_path} \\
@@ -1349,7 +1384,7 @@ async def play_media(
 
     # Собираем полную команду
     mpv_params_str = " ".join(mpv_params)
-    full_cmd = f"export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output HDMI-1 --auto && mpv {mpv_params_str} \"{url}\" > /tmp/mpv_play.log 2>&1 &"
+    full_cmd = f"export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output {DISPLAY_OUTPUT} --auto && mpv {mpv_params_str} \"{url}\" > /tmp/mpv_play.log 2>&1 &"
 
     logger.info(f"Запуск команды: {full_cmd}")
     result = run_command(full_cmd)
@@ -1488,7 +1523,7 @@ xset dpms force on
 xset s off
 xset s noblank
 xset dpms 0 0 0
-xrandr --output HDMI-1 --auto
+xrandr --output {DISPLAY_OUTPUT} --auto
 nohup {CHROME_KIOSK_CMD} --app=file://{html_filename} \\
   --disable-web-security \\
   --autoplay-policy=no-user-gesture-required > /tmp/chrome_webcam.log 2>&1 & disown"""
