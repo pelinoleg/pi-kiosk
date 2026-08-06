@@ -254,17 +254,27 @@ fi
 # --------------------------------------------------------------------- ufw ----
 # A firewall that silently drops the control port is easy to miss, because
 # everything still answers on loopback while nothing answers from the network.
-if command -v ufw >/dev/null && sudo ufw status 2>/dev/null | grep -q '^Status: active'; then
+# ufw lives in /usr/sbin, which is not on a normal user's PATH, so `command -v`
+# alone reports it missing on exactly the machines that have it.
+UFW=$(command -v ufw || true)
+for c in /usr/sbin/ufw /sbin/ufw; do
+    [ -n "$UFW" ] && break
+    [ -x "$c" ] && UFW="$c"
+done
+
+if [ -n "$UFW" ] && sudo "$UFW" status 2>/dev/null | grep -q '^Status: active'; then
     info "opening ports in ufw"
-    sudo ufw allow "${API_PORT}/tcp" >/dev/null 2>&1
-    sudo ufw allow 5353/udp >/dev/null 2>&1          # mDNS, for AirPlay discovery
+    sudo "$UFW" allow "${API_PORT}/tcp" >/dev/null 2>&1
+    sudo "$UFW" allow 5353/udp >/dev/null 2>&1        # mDNS, for AirPlay discovery
     if [ "${AIRPLAY_INSTALLED:-0}" = "1" ]; then
         P="${AIRPLAY_VIDEO_PORT:-35000}"
-        sudo ufw allow "${P}:$((P + 2))/tcp" >/dev/null 2>&1
-        sudo ufw allow "${P}:$((P + 2))/udp" >/dev/null 2>&1
-        sudo ufw allow 5000/tcp   >/dev/null 2>&1     # shairport-sync RTSP
-        sudo ufw allow 6001:6011/udp >/dev/null 2>&1  # shairport-sync audio/control
+        sudo "$UFW" allow "${P}:$((P + 2))/tcp" >/dev/null 2>&1
+        sudo "$UFW" allow "${P}:$((P + 2))/udp" >/dev/null 2>&1
+        sudo "$UFW" allow 5000/tcp      >/dev/null 2>&1  # shairport-sync RTSP
+        sudo "$UFW" allow 6001:6011/udp >/dev/null 2>&1  # shairport-sync audio/control
+        sudo "$UFW" allow 7000/udp      >/dev/null 2>&1  # uxplay timing/control
     fi
+    sudo "$UFW" reload >/dev/null 2>&1
 fi
 
 if [ "${AUTOLOGIN:-0}" = "1" ] && command -v raspi-config >/dev/null; then
