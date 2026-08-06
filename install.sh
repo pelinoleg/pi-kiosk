@@ -101,8 +101,20 @@ command -v chromium >/dev/null || warn "No chromium binary found; browser tabs w
 # ------------------------------------------------------------------- payload --
 info "installing application into $INSTALL_DIR"
 sudo -u "$KIOSK_USER" mkdir -p "$INSTALL_DIR"
-sudo cp "$SRC/app/main.py" "$SRC/app/clock.py" "$SRC/app/requirements.txt" "$INSTALL_DIR/"
-[ -f "$SRC/app/notification.mp3" ] && sudo cp "$SRC/app/notification.mp3" "$INSTALL_DIR/"
+
+# INSTALL_DIR may legitimately sit inside the checkout - keeping the repo and
+# the deployed app under one directory is easier to remember than two. In that
+# case the payload is already in place and copying it would be cp complaining
+# that source and destination are the same file, which under set -e aborts the
+# whole install.
+SRC_APP=$(cd "$SRC/app" && pwd)
+DST_APP=$(cd "$INSTALL_DIR" && pwd)
+if [ "$SRC_APP" != "$DST_APP" ]; then
+    sudo cp "$SRC/app/main.py" "$SRC/app/clock.py" "$SRC/app/requirements.txt" "$INSTALL_DIR/"
+    [ -f "$SRC/app/notification.mp3" ] && sudo cp "$SRC/app/notification.mp3" "$INSTALL_DIR/"
+else
+    info "app already in place (installing into the checkout)"
+fi
 sudo cp "$SRC/scripts/start-surface-api.sh" "$INSTALL_DIR/"
 sudo chown -R "$KIOSK_USER:$KIOSK_USER" "$INSTALL_DIR"
 sudo chmod +x "$INSTALL_DIR/start-surface-api.sh"
