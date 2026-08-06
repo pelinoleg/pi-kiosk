@@ -221,6 +221,52 @@ if systemctl list-unit-files 2>/dev/null | grep -q '^comitup'; then
     sudo systemctl disable --now comitup comitup-web 2>/dev/null || true
 fi
 
+# ------------------------------------------------------------------ airplay --
+if [ "${AIRPLAY:-1}" = "1" ]; then
+    info "installing AirPlay receivers (uxplay + shairport-sync)"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        uxplay shairport-sync avahi-daemon \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-x \
+        >/dev/null 2>&1 || warn "AirPlay packages failed to install"
+
+    if command -v uxplay >/dev/null; then
+        # Discovery is mDNS; without Avahi the device simply never appears on iOS.
+        sudo systemctl enable --now avahi-daemon >/dev/null 2>&1
+        # The packaged unit runs as its own user against ALSA and would fight us
+        # for the sound device; ours runs as the kiosk user against PulseAudio.
+        sudo systemctl disable --now shairport-sync >/dev/null 2>&1 || true
+
+        AIRPLAY_NAME="${AIRPLAY_NAME:-$(hostname)}"
+        if ! grep -q '^AIRPLAY_NAME=' /etc/kiosk/kiosk.env 2>/dev/null; then
+            printf '\nAIRPLAY_NAME=%s\nAIRPLAY_VIDEO_PORT=%s\n' \
+                "$AIRPLAY_NAME" "${AIRPLAY_VIDEO_PORT:-35000}" \
+                | sudo tee -a /etc/kiosk/kiosk.env >/dev/null
+        else
+            sudo sed -i "s|^AIRPLAY_NAME=.*|AIRPLAY_NAME=${AIRPLAY_NAME}|" /etc/kiosk/kiosk.env
+        fi
+        AIRPLAY_INSTALLED=1
+    else
+        warn "uxplay not available, skipping AirPlay"
+    fi
+fi
+
+# --------------------------------------------------------------------- ufw ----
+# A firewall that silently drops the control port is easy to miss, because
+# everything still answers on loopback while nothing answers from the network.
+if command -v ufw >/dev/null && sudo ufw status 2>/dev/null | grep -q '^Status: active'; then
+    info "opening ports in ufw"
+    sudo ufw allow "${API_PORT}/tcp" >/dev/null 2>&1
+    sudo ufw allow 5353/udp >/dev/null 2>&1          # mDNS, for AirPlay discovery
+    if [ "${AIRPLAY_INSTALLED:-0}" = "1" ]; then
+        P="${AIRPLAY_VIDEO_PORT:-35000}"
+        sudo ufw allow "${P}:$((P + 2))/tcp" >/dev/null 2>&1
+        sudo ufw allow "${P}:$((P + 2))/udp" >/dev/null 2>&1
+        sudo ufw allow 5000/tcp   >/dev/null 2>&1     # shairport-sync RTSP
+        sudo ufw allow 6001:6011/udp >/dev/null 2>&1  # shairport-sync audio/control
+    fi
+fi
+
 if [ "${AUTOLOGIN:-0}" = "1" ] && command -v raspi-config >/dev/null; then
     info "enabling console autologin"
     sudo raspi-config nonint do_boot_behaviour B2 || warn "autologin setup failed, continuing"
@@ -232,6 +278,10 @@ sudo systemctl enable --now xinit.service        >/dev/null 2>&1 || warn "xinit 
 sudo systemctl enable --now surface-api.service  >/dev/null 2>&1 || warn "surface-api failed to start"
 sudo systemctl enable --now net-watchdog.timer   >/dev/null 2>&1 || warn "watchdog timer failed to start"
 sudo systemctl enable kiosk-restore.service      >/dev/null 2>&1 || true
+if [ "${AIRPLAY_INSTALLED:-0}" = "1" ]; then
+    sudo systemctl enable --now airplay-video.service >/dev/null 2>&1 || warn "airplay-video failed to start"
+    sudo systemctl enable --now airplay-audio.service >/dev/null 2>&1 || warn "airplay-audio failed to start"
+fi
 
 # Flush to disk before anything can hard-hang and truncate what we just wrote.
 sync
@@ -240,7 +290,9 @@ sync
 echo
 info "verifying"
 ok=1
-for u in xinit.service surface-api.service net-watchdog.timer; do
+CHECK_UNITS="xinit.service surface-api.service net-watchdog.timer"
+[ "${AIRPLAY_INSTALLED:-0}" = "1" ] && CHECK_UNITS="$CHECK_UNITS airplay-video.service airplay-audio.service"
+for u in $CHECK_UNITS; do
     state=$(systemctl is-active "$u" 2>&1 || true)
     printf '  %-24s %s\n' "$u" "$state"
     [ "$state" = active ] || ok=0

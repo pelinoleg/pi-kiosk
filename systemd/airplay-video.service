@@ -1,0 +1,25 @@
+[Unit]
+Description=AirPlay screen mirroring (UxPlay)
+# Needs the X session to draw into and Avahi to be discoverable at all.
+After=xinit.service avahi-daemon.service
+Wants=avahi-daemon.service
+BindsTo=xinit.service
+
+[Service]
+Type=simple
+User=__USER__
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=__HOME__/.Xauthority"
+Environment="XDG_RUNTIME_DIR=/run/user/__UID__"
+Environment="PULSE_SERVER=unix:/run/user/__UID__/pulse/native"
+Environment="AIRPLAY_NAME=%H"
+Environment="AIRPLAY_VIDEO_PORT=35000"
+EnvironmentFile=-/etc/kiosk/kiosk.env
+# -nh keeps the hostname off the advertised name, -fs draws fullscreen.
+# The port matters: uxplay's own default is 7000, which the control API owns.
+ExecStart=/usr/bin/uxplay -n "${AIRPLAY_NAME}" -nh -fs -p ${AIRPLAY_VIDEO_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

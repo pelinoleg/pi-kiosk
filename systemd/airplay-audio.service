@@ -1,0 +1,20 @@
+[Unit]
+Description=AirPlay audio receiver (shairport-sync)
+After=avahi-daemon.service sound.target
+Wants=avahi-daemon.service
+
+[Service]
+Type=simple
+# Runs as the kiosk user so it reaches that user's PulseAudio, the same server
+# the rest of the kiosk plays through - a system-wide daemon cannot see it.
+User=__USER__
+Environment="XDG_RUNTIME_DIR=/run/user/__UID__"
+Environment="PULSE_SERVER=unix:/run/user/__UID__/pulse/native"
+Environment="AIRPLAY_NAME=%H"
+EnvironmentFile=-/etc/kiosk/kiosk.env
+ExecStart=/usr/bin/shairport-sync -a "${AIRPLAY_NAME} Audio" -o pa
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
