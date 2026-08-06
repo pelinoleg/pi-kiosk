@@ -1574,21 +1574,21 @@ async def play_immich_album(
 
 @app.get("/surface/webcam")
 async def show_webcam(
-        url: str = Query(..., description="URL веб-камеры"),
-        usr: str = Query("", description="Имя пользователя для веб-камеры"),
-        pwd: str = Query("", description="Пароль для веб-камеры"),
+        url: str = Query("http://2.136.193.46:8081/cgi-bin/CGIProxy.fcgi", description="URL веб-камеры"),
+        usr: str = Query("Cnb", description="Имя пользователя для веб-камеры"),
+        pwd: str = Query("Club@00", description="Пароль для веб-камеры"),
         refresh_rate: int = Query(1000, description="Частота обновления изображения (мс)"),
-        location: str = Query("", description="Название местоположения"),
-        show_temp: bool = Query(False, description="Показывать температуру моря (нужен weather_key)"),
-        weather_key: str = Query("", description="API-ключ worldweatheronline.com"),
+        location: str = Query("Badalona", description="Название местоположения"),
+        show_temp: bool = Query(True, description="Показывать температуру моря"),
+        weather_key: str = Query("481ef4eeeb9e4e2ebb395728251203", description="API-ключ worldweatheronline.com"),
         weather_query: str = Query("41.4333,2.2333", description="Координаты для запроса погоды")
 ):
     """
     Отображает поток с веб-камеры в Chrome в режиме киоска.
     Позволяет отображать информацию о температуре моря.
 
-    Репозиторий публичный, поэтому адрес камеры, логин, пароль и ключ погоды
-    передаются только параметрами — в коде их быть не должно.
+    Дефолты — публичная камера пляжа Бадалоны: её владельцы сами опубликовали
+    доступ у себя на сайте, чтобы люди смотрели. Это не наши учётные данные.
     """
     # Останавливаем все текущие процессы воспроизведения
     kill_chrome_processes()

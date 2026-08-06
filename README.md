@@ -230,45 +230,99 @@ curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh 
 
 ## API
 
-Порт 7000. Основное:
+Порт по умолчанию — **7000** (`API_PORT` в `/etc/kiosk/kiosk.env`). Все
+эндпоинты — обычные GET (кроме двух POST), дёргаются из браузера, curl, n8n,
+Home Assistant — чего угодно.
+
+### Полезные адреса
+
+| URL | Что это |
+|---|---|
+| `http://<ip>:7000/surface/remote` | **веб-пульт** — страница для телефона: статус, скриншот, возврат киоска, AirPlay, экран, громкость, часы, лог, перезагрузка |
+| `http://<ip>:7000/` | список всех маршрутов (генерируется из приложения, не устаревает) |
+| `http://<ip>:7000/docs` | интерактивная документация Swagger — там же можно дёргать эндпоинты кнопками |
+| `http://<ip>:7000/surface/health` | всё состояние киоска одним JSON |
+
+### Что показывать на экране
 
 ```
-GET  /surface/chrome-tabs?urls=...&urls=...&times=600&times=60
-GET  /surface/display-on            /surface/display-off      /surface/display-state
-GET  /surface/kill-all              /surface/status           /surface/processes
-GET  /surface/clock-show            /surface/clock-hide       /surface/clock-toggle
-GET  /surface/system-volume/{0-100} /surface/toggle-mute      /surface/audio-outputs
-GET  /surface/playback-toggle       /surface/playback-next    /surface/playback-status
-GET  /surface/webcam                /surface/immich/album     /surface/reboot
-GET  /surface/airplay-state         /surface/airplay-on       /surface/airplay-off
-GET  /surface/airplay-kick
-GET  /surface/health                /surface/screenshot       /surface/logs
-GET  /surface/restore               /surface/remote
-POST /surface/custom-command        /surface/tts-play-upload
+GET /surface/chrome-tabs?urls=<url>&urls=<url>&times=<сек>&times=<сек>
 ```
-
-`GET /` отдаёт полный список маршрутов — он собирается из приложения и не
-устаревает.
-
-AirPlay: `airplay-state` показывает состояние сервисов и адреса подключённых
-клиентов, `airplay-on`/`airplay-off` включают и выключают приём (при
-выключении киоск сам возвращается на экран), `airplay-kick` сбрасывает
-зависшего клиента перезапуском приёмника.
-
-Диагностика: `health` — всё состояние киоска одним JSON (юниты, дисплей,
-питание, температура, AirPlay); `screenshot` — PNG текущего экрана;
-`logs?lines=N` — хвост `/var/log/kiosk.log`; `restore` — вернуть на экран то,
-что киоск должен показывать.
-
-**Веб-пульт:** `http://<ip>:7000/surface/remote` — страница для телефона с
-кнопками поверх этих эндпоинтов: статус, скриншот, возврат киоска, AirPlay,
-экран, громкость, часы, лог, перезагрузка.
-
-Ротация вкладок: `urls` и `times` — параллельные списки, `times` в секундах.
+Ротация вкладок — главный режим киоска. `urls` и `times` — параллельные
+списки: каждый URL показывается своё число секунд, по кругу.
 
 ```bash
 curl "http://<ip>:7000/surface/chrome-tabs?urls=http://a/&urls=http://b/&times=600&times=60"
 ```
+
+| Эндпоинт | Что делает |
+|---|---|
+| `GET /surface/play?url=...&volume=100&loop=true&fullscreen=true` | видео/поток через MPV; YouTube-ссылки понимает, одиночное видео превращает в «радио» |
+| `GET /surface/immich/album?ip=<nas>&api_key=<key>&album_id=<id>&limit=50&shuffle=true` | плейлист видео из альбома Immich через MPV |
+| `GET /surface/webcam` | публичная камера пляжа Бадалоны с температурой моря (дефолты); своя камера — параметрами `url`, `usr`, `pwd`, `refresh_rate`, `location`, `show_temp`, `weather_key`, `weather_query` |
+| `GET /surface/kill-all` | убрать с экрана всё: браузер и плеер |
+| `GET /surface/restore` | вернуть то, что киоск должен показывать (то же самое делает `kiosk-restore` после загрузки и после AirPlay) |
+
+### Экран
+
+| Эндпоинт | Что делает |
+|---|---|
+| `GET /surface/display-state` | `on` / `off` |
+| `GET /surface/display-on` | включить панель |
+| `GET /surface/display-off` | выключить панель (вместе с подсветкой) |
+
+### AirPlay
+
+| Эндпоинт | Что делает |
+|---|---|
+| `GET /surface/airplay-state` | состояние приёмников + адреса подключённых клиентов |
+| `GET /surface/airplay-on` | включить приём (экран и звук) |
+| `GET /surface/airplay-off` | выключить приём; киоск сам возвращается на экран |
+| `GET /surface/airplay-kick` | сбросить зависший телефон перезапуском приёмника |
+
+### Звук
+
+| Эндпоинт | Что делает |
+|---|---|
+| `GET /surface/system-volume` | текущая громкость |
+| `GET /surface/system-volume/{0-150}` | установить громкость |
+| `GET /surface/system-volume-up` / `-down` | ±5% |
+| `GET /surface/toggle-mute` | вкл/выкл звук |
+| `GET /surface/audio-outputs` | список аудиовыходов |
+| `GET /surface/set-audio-output/{sink}` | переключить аудиовыход |
+| `POST /surface/tts-play-upload` | проиграть загруженный аудиофайл (multipart: `audio_file`, опционально `main_volume`, `play_notification`, `notification_volume`, `delay_after_notification`) — для голосовых уведомлений из n8n |
+
+```bash
+curl -F "audio_file=@speech.mp3" -F "main_volume=90" \
+  "http://<ip>:7000/surface/tts-play-upload"
+```
+
+### Плеер (MPV)
+
+`playback-status`, `playback-toggle`, `playback-play`, `playback-pause`,
+`playback-next`, `playback-prev`, `playback-seek/{сек}`, `toggle-fill`
+(обрезка вместо чёрных полос). Все отвечают 404, если MPV не запущен.
+
+### Часы поверх экрана
+
+`clock-show`, `clock-hide`, `clock-toggle`, `clock-status` — полупрозрачные
+часы поверх любого контента (PyQt5, ставится установщиком).
+
+### Диагностика и система
+
+| Эндпоинт | Что делает |
+|---|---|
+| `GET /surface/health` | юниты systemd, дисплей и подсветка, watchdog, AirPlay, троттлинг питания, температура CPU, аптайм, память, диск |
+| `GET /surface/screenshot` | PNG текущего экрана — увидеть киоск, не вставая |
+| `GET /surface/logs?lines=50` | хвост `/var/log/kiosk.log` (watchdog, restore, AirPlay, смена выхода) |
+| `GET /surface/status` | краткий статус: экран, звук, что играет |
+| `GET /surface/processes` | процессы Chrome и MPV |
+| `GET /surface/reboot` | перезагрузка машины |
+| `POST /surface/custom-command` | произвольная shell-команда (`{"command": "..."}`); есть и GET-вариант `custom-command-get?command=...` |
+
+**API слушает на всех интерфейсах и не имеет аутентификации** — он рассчитан
+на домашнюю сеть за роутером. Наружу его не публиковать; `custom-command` и
+`reboot` — это полный контроль над машиной.
 
 ---
 
