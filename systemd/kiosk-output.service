@@ -1,0 +1,11 @@
+[Unit]
+Description=Pick the display output (HDMI when plugged, panel otherwise)
+After=xinit.service
+
+[Service]
+Type=oneshot
+User=__USER__
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=__HOME__/.Xauthority"
+Environment="HOME=__HOME__"
+ExecStart=/usr/local/bin/kiosk-output.sh

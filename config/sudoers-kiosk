@@ -1,0 +1,5 @@
+# Installed by pi-kiosk as /etc/sudoers.d/kiosk.
+# Switching between HDMI and the built-in panel changes which output main.py
+# must drive, and it resolves that once at import - so the session user needs
+# to be able to restart just that one service.
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart surface-api.service

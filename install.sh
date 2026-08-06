@@ -18,6 +18,9 @@
 #   AIRPLAY_NAME  name iOS shows                    (default the hostname)
 #   HW_WATCHDOG   1 to arm the hardware watchdog    (default off, see README)
 #   DISPLAY_OFF_AT / DISPLAY_ON_AT   HH:MM to blank the panel overnight
+#
+# HDMI is used automatically whenever a cable is present, and the built-in
+# panel otherwise; both are never lit at once.
 #   GITHUB_TOKEN  required only when the repo is private
 #   KIOSK_REPO    owner/name to fetch from         (default below)
 #   KIOSK_REF     branch or tag                    (default main)
@@ -114,6 +117,13 @@ info "installing watchdog and restore scripts"
 sudo install -m 0755 "$SRC/scripts/net-watchdog.sh"  /usr/local/bin/net-watchdog.sh
 sudo install -m 0755 "$SRC/scripts/kiosk-restore.sh" /usr/local/bin/kiosk-restore.sh
 sudo install -m 0755 "$SRC/scripts/kiosk-display.sh" /usr/local/bin/kiosk-display.sh
+sudo install -m 0755 "$SRC/scripts/kiosk-output.sh"  /usr/local/bin/kiosk-output.sh
+sudo install -m 0755 "$SRC/scripts/airplay-watch.sh" /usr/local/bin/airplay-watch.sh
+
+# Output switching restarts surface-api, which needs root; grant exactly that.
+sed "s|__USER__|$KIOSK_USER|g" "$SRC/config/sudoers-kiosk" | sudo tee /etc/sudoers.d/kiosk >/dev/null
+sudo chmod 0440 /etc/sudoers.d/kiosk
+sudo visudo -cf /etc/sudoers.d/kiosk >/dev/null 2>&1 || { sudo rm -f /etc/sudoers.d/kiosk; warn "sudoers snippet rejected, dropped it"; }
 # Backlight files under /sys/class/backlight are owned by root:video, so the
 # panel can be dimmed without sudo once the kiosk user is in that group.
 sudo usermod -aG video "$KIOSK_USER" 2>/dev/null || true
@@ -316,6 +326,7 @@ sudo systemctl enable --now xinit.service        >/dev/null 2>&1 || warn "xinit 
 sudo systemctl enable --now surface-api.service  >/dev/null 2>&1 || warn "surface-api failed to start"
 sudo systemctl enable --now net-watchdog.timer   >/dev/null 2>&1 || warn "watchdog timer failed to start"
 sudo systemctl enable kiosk-restore.service      >/dev/null 2>&1 || true
+sudo systemctl enable --now kiosk-output.timer   >/dev/null 2>&1 || warn "output watcher failed to start"
 if [ "${SCHEDULE:-0}" = "1" ]; then
     sudo systemctl enable --now kiosk-display-off.timer >/dev/null 2>&1 || warn "panel off timer failed"
     sudo systemctl enable --now kiosk-display-on.timer  >/dev/null 2>&1 || warn "panel on timer failed"
@@ -323,6 +334,9 @@ fi
 if [ "${AIRPLAY_INSTALLED:-0}" = "1" ]; then
     sudo systemctl enable --now airplay-video.service >/dev/null 2>&1 || warn "airplay-video failed to start"
     sudo systemctl enable --now airplay-audio.service >/dev/null 2>&1 || warn "airplay-audio failed to start"
+    # Without this the mirror window stays up after a phone disconnects and the
+    # screen looks frozen on the last frame.
+    sudo systemctl enable --now airplay-watch.timer >/dev/null 2>&1 || warn "airplay watcher failed to start"
 fi
 
 # Flush to disk before anything can hard-hang and truncate what we just wrote.

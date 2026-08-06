@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll for the end of an AirPlay session
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=20s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

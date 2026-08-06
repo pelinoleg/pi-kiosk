@@ -12,6 +12,10 @@ for out in HDMI-1 HDMI-2 HDMI-A-1 HDMI-A-2 DSI-1 DSI-2 DSI-A-1; do
     xrandr --output "$out" --auto 2>/dev/null && break
 done
 
+# Pick a single output before anything draws: with a DSI panel permanently
+# connected, plugging in HDMI would otherwise light both screens at once.
+/usr/local/bin/kiosk-output.sh 2>/dev/null || true
+
 unclutter -idle 5 &
 
 exec openbox-session

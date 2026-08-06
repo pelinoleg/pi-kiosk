@@ -1,0 +1,6 @@
+[Unit]
+Description=Bring the kiosk back when an AirPlay session ends
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/airplay-watch.sh
