@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+#
+# pi-kiosk installer. Non-interactive by design: it is meant to be piped from
+# curl, where stdin is the script itself and prompting is impossible.
+#
+#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | bash
+#
+# Everything is configured through environment variables, all optional:
+#
+#   INSTALL_DIR   where the app lands              (default ~/kiosk)
+#   KIOSK_USER    user that owns the session       (default the invoking user)
+#   COMBO_URL     what to restore on screen        (default empty = disabled)
+#   API_PORT      port for the control API         (default 7000)
+#   WIFI_IFACE    interface the watchdog nurses    (default wlan0, empty = wired)
+#   PROBE_HOSTS   LAN hosts that prove reachability (default the gateway only)
+#   AUTOLOGIN=1   also configure console autologin (default off)
+#   GITHUB_TOKEN  required only when the repo is private
+#   KIOSK_REPO    owner/name to fetch from         (default below)
+#   KIOSK_REF     branch or tag                    (default main)
+#
+# Re-running is safe: it upgrades in place and never overwrites an existing
+# /etc/kiosk/kiosk.env.
+
+set -euo pipefail
+
+KIOSK_REPO="${KIOSK_REPO:-pelinoleg/pi-kiosk}"
+KIOSK_REF="${KIOSK_REF:-main}"
+
+RED=$'\033[0;31m'; GRN=$'\033[0;32m'; YEL=$'\033[1;33m'; NC=$'\033[0m'
+info() { printf '%s[..]%s %s\n' "$GRN" "$NC" "$*"; }
+warn() { printf '%s[!!]%s %s\n' "$YEL" "$NC" "$*"; }
+die()  { printf '%s[XX]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------- preflight --
+[ "$(id -u)" -eq 0 ] && die "Run as your normal user, not root. sudo is used where needed."
+command -v systemctl >/dev/null || die "This needs systemd."
+command -v apt-get   >/dev/null || die "This targets Debian / Raspberry Pi OS (apt-get not found)."
+sudo -n true 2>/dev/null || info "sudo will ask for your password."
+
+KIOSK_USER="${KIOSK_USER:-$USER}"
+KIOSK_HOME=$(getent passwd "$KIOSK_USER" | cut -d: -f6)
+[ -n "$KIOSK_HOME" ] || die "Cannot resolve home directory for user '$KIOSK_USER'."
+KIOSK_UID=$(id -u "$KIOSK_USER")
+INSTALL_DIR="${INSTALL_DIR:-$KIOSK_HOME/kiosk}"
+API_PORT="${API_PORT:-7000}"
+
+info "user=$KIOSK_USER  dir=$INSTALL_DIR  port=$API_PORT"
+
+# ------------------------------------------------------------------ sources --
+# Either we are sitting in a checkout, or we fetch a tarball. A private repo
+# needs a token; the API endpoint accepts one, raw.githubusercontent does too.
+SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")
+if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/app/main.py" ]; then
+    SRC="$SELF_DIR"
+    info "installing from local checkout: $SRC"
+else
+    command -v curl >/dev/null || die "curl is required to fetch the sources."
+    SRC=$(mktemp -d)
+    trap 'rm -rf "$SRC"' EXIT
+    info "downloading $KIOSK_REPO@$KIOSK_REF"
+    AUTH=()
+    [ -n "${GITHUB_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    if ! curl -fsSL "${AUTH[@]}" \
+            "https://api.github.com/repos/$KIOSK_REPO/tarball/$KIOSK_REF" \
+            -o "$SRC/src.tgz"; then
+        die "Download failed. For a private repo, export GITHUB_TOKEN=<a token with repo scope>."
+    fi
+    tar xzf "$SRC/src.tgz" -C "$SRC" --strip-components=1
+    rm -f "$SRC/src.tgz"
+    [ -f "$SRC/app/main.py" ] || die "Downloaded archive does not look like pi-kiosk."
+fi
+
+# ------------------------------------------------------------------ packages --
+info "installing system packages (this is the slow part)"
+sudo apt-get update -qq
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    xserver-xorg x11-xserver-utils xinit openbox unclutter \
+    chromium \
+    python3 python3-venv python3-pip \
+    mpv ffmpeg mpg123 pulseaudio alsa-utils \
+    network-manager curl wget git socat \
+    >/dev/null || die "Package installation failed."
+
+# Raspberry Pi OS ships chromium; plain Debian calls it chromium-browser. Make
+# sure at least one of them exists, and that /usr/bin/chromium resolves.
+if ! command -v chromium >/dev/null; then
+    sudo apt-get install -y -qq chromium-browser >/dev/null 2>&1 || true
+    if command -v chromium-browser >/dev/null && [ ! -e /usr/bin/chromium ]; then
+        sudo ln -sf "$(command -v chromium-browser)" /usr/bin/chromium
+    fi
+fi
+command -v chromium >/dev/null || warn "No chromium binary found; browser tabs will not work."
+
+# ------------------------------------------------------------------- payload --
+info "installing application into $INSTALL_DIR"
+sudo -u "$KIOSK_USER" mkdir -p "$INSTALL_DIR"
+sudo cp "$SRC/app/main.py" "$SRC/app/clock.py" "$SRC/app/requirements.txt" "$INSTALL_DIR/"
+[ -f "$SRC/app/notification.mp3" ] && sudo cp "$SRC/app/notification.mp3" "$INSTALL_DIR/"
+sudo cp "$SRC/scripts/start-surface-api.sh" "$INSTALL_DIR/"
+sudo chown -R "$KIOSK_USER:$KIOSK_USER" "$INSTALL_DIR"
+sudo chmod +x "$INSTALL_DIR/start-surface-api.sh"
+
+info "creating the Python environment"
+sudo -u "$KIOSK_USER" python3 -m venv "$INSTALL_DIR/.venv"
+sudo -u "$KIOSK_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet --upgrade pip
+sudo -u "$KIOSK_USER" "$INSTALL_DIR/.venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt" \
+    || die "pip install failed."
+
+info "installing watchdog and restore scripts"
+sudo install -m 0755 "$SRC/scripts/net-watchdog.sh"  /usr/local/bin/net-watchdog.sh
+sudo install -m 0755 "$SRC/scripts/kiosk-restore.sh" /usr/local/bin/kiosk-restore.sh
+sudo mkdir -p /var/lib/kiosk
+sudo touch /var/log/kiosk.log
+
+# -------------------------------------------------------------------- config --
+sudo mkdir -p /etc/kiosk
+if [ -f /etc/kiosk/kiosk.env ]; then
+    info "keeping existing /etc/kiosk/kiosk.env"
+else
+    info "writing /etc/kiosk/kiosk.env"
+    GW=$(ip route show default 2>/dev/null | awk '/^default/{print $3; exit}')
+    sudo cp "$SRC/config/kiosk.env.example" /etc/kiosk/kiosk.env
+    sudo sed -i "s|^API_PORT=.*|API_PORT=${API_PORT}|" /etc/kiosk/kiosk.env
+    sudo sed -i "s|^COMBO_URL=.*|COMBO_URL=${COMBO_URL:-}|" /etc/kiosk/kiosk.env
+    sudo sed -i "s|^WIFI_IFACE=.*|WIFI_IFACE=${WIFI_IFACE-wlan0}|" /etc/kiosk/kiosk.env
+    sudo sed -i "s|^PROBE_HOSTS=.*|PROBE_HOSTS=\"${PROBE_HOSTS:-$GW}\"|" /etc/kiosk/kiosk.env
+fi
+
+info "installing the X session"
+sudo -u "$KIOSK_USER" cp "$SRC/config/xinitrc" "$KIOSK_HOME/.xinitrc"
+sudo chmod +x "$KIOSK_HOME/.xinitrc"
+
+# ------------------------------------------------------------------- systemd --
+info "installing systemd units"
+render() {
+    sed -e "s|__USER__|$KIOSK_USER|g" \
+        -e "s|__HOME__|$KIOSK_HOME|g" \
+        -e "s|__UID__|$KIOSK_UID|g" \
+        -e "s|__INSTALL_DIR__|$INSTALL_DIR|g" \
+        "$1" | sudo tee "/etc/systemd/system/$(basename "$1")" >/dev/null
+}
+for u in "$SRC"/systemd/*.service "$SRC"/systemd/*.timer; do render "$u"; done
+
+# A zero-length unit file is reported by systemd as "masked", with no error at
+# all. That is exactly what an unclean shutdown mid-install leaves behind, so
+# verify sizes rather than trusting that the writes landed.
+for u in surface-api.service xinit.service net-watchdog.service net-watchdog.timer kiosk-restore.service; do
+    [ -s "/etc/systemd/system/$u" ] || die "Unit $u came out empty. Disk full, or the box died mid-write."
+done
+
+info "wifi power save off, log rotation, hardware watchdog"
+sudo mkdir -p /etc/NetworkManager/conf.d
+printf '[connection]\nwifi.powersave = 2\n' | sudo tee /etc/NetworkManager/conf.d/10-no-powersave.conf >/dev/null
+
+sudo tee /etc/logrotate.d/kiosk >/dev/null <<'EOF'
+/var/log/kiosk.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+
+sudo mkdir -p /etc/systemd/system.conf.d
+sudo tee /etc/systemd/system.conf.d/watchdog.conf >/dev/null <<'EOF'
+[Manager]
+RuntimeWatchdogSec=20
+RebootWatchdogSec=2min
+EOF
+
+# comitup manages NetworkManager itself and drops to an access point on any
+# connectivity hiccup, which reads to a user as "it forgot my wifi". If it is
+# installed, it will fight this watchdog, so stand it down.
+if systemctl list-unit-files 2>/dev/null | grep -q '^comitup'; then
+    warn "comitup found — disabling it, it conflicts with the watchdog"
+    sudo systemctl disable --now comitup comitup-web 2>/dev/null || true
+fi
+
+if [ "${AUTOLOGIN:-0}" = "1" ] && command -v raspi-config >/dev/null; then
+    info "enabling console autologin"
+    sudo raspi-config nonint do_boot_behaviour B2 || warn "autologin setup failed, continuing"
+fi
+
+info "enabling services"
+sudo systemctl daemon-reload
+sudo systemctl enable --now xinit.service        >/dev/null 2>&1 || warn "xinit failed to start"
+sudo systemctl enable --now surface-api.service  >/dev/null 2>&1 || warn "surface-api failed to start"
+sudo systemctl enable --now net-watchdog.timer   >/dev/null 2>&1 || warn "watchdog timer failed to start"
+sudo systemctl enable kiosk-restore.service      >/dev/null 2>&1 || true
+
+# Flush to disk before anything can hard-hang and truncate what we just wrote.
+sync
+
+# --------------------------------------------------------------------- check --
+echo
+info "verifying"
+ok=1
+for u in xinit.service surface-api.service net-watchdog.timer; do
+    state=$(systemctl is-active "$u" 2>&1 || true)
+    printf '  %-24s %s\n' "$u" "$state"
+    [ "$state" = active ] || ok=0
+done
+
+sleep 3
+code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${API_PORT}/" 2>/dev/null || echo 000)
+printf '  %-24s HTTP %s\n' "API on :$API_PORT" "$code"
+[ "$code" = 200 ] || ok=0
+
+echo
+if [ "$ok" = 1 ]; then
+    info "Done. API: http://$(hostname -I 2>/dev/null | awk '{print $1}'):${API_PORT}/"
+else
+    warn "Installed, but something is not up yet. Check:"
+    warn "  systemctl status surface-api xinit --no-pager"
+    warn "  tail -50 /var/log/kiosk.log"
+fi
+echo
+info "Config:  /etc/kiosk/kiosk.env   (set COMBO_URL to enable display restore)"
+info "Log:     /var/log/kiosk.log"

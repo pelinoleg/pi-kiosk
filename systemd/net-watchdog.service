@@ -1,0 +1,7 @@
+[Unit]
+Description=Kiosk network watchdog (single check)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/net-watchdog.sh

@@ -1,0 +1,16 @@
+#!/bin/bash
+# X session for the kiosk: no blanking, no cursor, no desktop furniture.
+
+xset -dpms
+xset s off
+xset s noblank
+
+# Force HDMI on in case X started before the monitor was attached. The output
+# name differs across Pi models and drivers, so try each one.
+for out in HDMI-1 HDMI-2 HDMI-A-1 HDMI-A-2; do
+    xrandr --output "$out" --auto 2>/dev/null && break
+done
+
+unclutter -idle 5 &
+
+exec openbox-session

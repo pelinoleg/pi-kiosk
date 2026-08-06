@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pydantic
+requests
+psutil
+# UploadFile/Form endpoints (TTS upload) fail at import time without this.
+python-multipart

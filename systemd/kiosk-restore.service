@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore the kiosk display after boot
+After=network-online.target surface-api.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kiosk-restore.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

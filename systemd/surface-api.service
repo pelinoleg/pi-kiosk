@@ -1,0 +1,21 @@
+[Unit]
+Description=Surface Control API
+After=network.target xinit.service
+Wants=xinit.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__INSTALL_DIR__
+Environment="INSTALL_DIR=__INSTALL_DIR__"
+Environment="PATH=__INSTALL_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=__HOME__/.Xauthority"
+Environment="XDG_RUNTIME_DIR=/run/user/__UID__"
+EnvironmentFile=-/etc/kiosk/kiosk.env
+ExecStart=__INSTALL_DIR__/start-surface-api.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=X Server for the kiosk
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/startx
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
