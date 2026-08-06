@@ -54,7 +54,10 @@ if [ "$had" = 1 ]; then
     systemctl restart airplay-video.service
     # Give uxplay a moment to drop its window before nudging the browser back.
     sleep 3
-    if [ -x /usr/local/bin/kiosk-restore.sh ]; then
-        /usr/local/bin/kiosk-restore.sh >/dev/null 2>&1 &
-    fi
+    # Run the restore as its own unit, not as a backgrounded child: this script
+    # is a oneshot service, and systemd kills whatever is left in its cgroup
+    # the moment the main process exits — a `&` child dies before it can act.
+    # `restart`, not `start`: kiosk-restore has RemainAfterExit=yes, so after
+    # boot it sits active and a plain `start` would be a no-op.
+    systemctl restart --no-block kiosk-restore.service
 fi
