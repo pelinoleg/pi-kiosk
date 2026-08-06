@@ -463,9 +463,27 @@ async def get_display_state():
         raise HTTPException(status_code=500, detail=f"Ошибка получения состояния дисплея: {result['stderr']}")
 
 
+# Флаг «экран выключен намеренно». Его уважает kiosk-output.sh: без флага
+# сторож выходов на ближайшем тике (раз в 30с) молча включал панель обратно —
+# ровно так выглядело «выключил экран, а через 10-20 секунд он сам зажёгся».
+DISPLAY_OFF_FLAG = "/var/lib/kiosk/display_off"
+
+
+def set_display_off_flag(off: bool):
+    try:
+        if off:
+            with open(DISPLAY_OFF_FLAG, "w") as f:
+                f.write(f"{int(time.time())}\n")
+        elif os.path.exists(DISPLAY_OFF_FLAG):
+            os.remove(DISPLAY_OFF_FLAG)
+    except OSError as e:
+        logger.warning(f"Не удалось обновить {DISPLAY_OFF_FLAG}: {e}")
+
+
 @app.get("/surface/display-on")
 async def turn_display_on():
     """Включение дисплея"""
+    set_display_off_flag(False)
     cmd = f"export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output {DISPLAY_OUTPUT} --auto"
     result = run_command(cmd)
 
@@ -478,12 +496,16 @@ async def turn_display_on():
 @app.get("/surface/display-off")
 async def turn_display_off():
     """Выключение дисплея"""
+    # Флаг ставится до xrandr, чтобы сторож выходов не успел вклиниться между
+    # гашением и записью флага; при неудаче — снимается.
+    set_display_off_flag(True)
     cmd = f"export DISPLAY=:0 && xrandr --output {DISPLAY_OUTPUT} --off"
     result = run_command(cmd)
 
     if result["success"]:
         return {"state": "off", "message": "Дисплей выключен"}
     else:
+        set_display_off_flag(False)
         raise HTTPException(status_code=500, detail=f"Ошибка выключения дисплея: {result['stderr']}")
 
 
@@ -1372,6 +1394,8 @@ xrandr --output {DISPLAY_OUTPUT} --auto
     --disable-background-timer-throttling \\
     --autoplay-policy=no-user-gesture-required > /tmp/chrome_tabs.log 2>&1 &"""
 
+    # Команда включает дисплей принудительно — флаг «выключен намеренно» снят.
+    set_display_off_flag(False)
     log_action(f"Запуск Chrome с командой: {chrome_cmd}")
     result = run_command(chrome_cmd)
     log_action(f"Результат запуска Chrome: {result}")
@@ -1474,6 +1498,7 @@ async def play_media(
     full_cmd = f"export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output {DISPLAY_OUTPUT} --auto && mpv {mpv_params_str} \"{url}\" > /tmp/mpv_play.log 2>&1 &"
 
     logger.info(f"Запуск команды: {full_cmd}")
+    set_display_off_flag(False)
     result = run_command(full_cmd)
 
     return {
@@ -1624,6 +1649,7 @@ nohup {CHROME_KIOSK_CMD} --app=file://{html_filename} \\
   --autoplay-policy=no-user-gesture-required > /tmp/chrome_webcam.log 2>&1 & disown"""
 
         # Выполняем команду
+        set_display_off_flag(False)
         result = run_command(chrome_cmd)
 
         if not result["success"]:

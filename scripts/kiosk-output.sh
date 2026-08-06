@@ -27,6 +27,11 @@ log() {
     logger -t kiosk-output -- "$*" 2>/dev/null || true
 }
 
+# The panel was switched off on purpose - by hand over the API or by the
+# night schedule. Re-enabling a mode-less output is exactly this script's job,
+# so without this check it silently lit the screen back up on the next tick.
+[ -e /var/lib/kiosk/display_off ] && exit 0
+
 query=$(xrandr --query 2>/dev/null) || exit 0
 [ -n "$query" ] || exit 0
 

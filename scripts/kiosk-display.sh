@@ -25,6 +25,15 @@ log() {
     logger -t kiosk-display -- "$*" 2>/dev/null || true
 }
 
+# Mark the OFF as intentional before touching anything, so kiosk-output does
+# not relight the panel on its next tick. The API does the same when called
+# directly; doing it here too covers the xrandr fallback path.
+if [ "$action" = off ]; then
+    date +%s >/var/lib/kiosk/display_off 2>/dev/null || true
+else
+    rm -f /var/lib/kiosk/display_off 2>/dev/null || true
+fi
+
 code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' \
        "http://127.0.0.1:${API_PORT}/surface/display-${action}" 2>/dev/null)
 
