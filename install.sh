@@ -129,6 +129,13 @@ sudo visudo -cf /etc/sudoers.d/kiosk >/dev/null 2>&1 || { sudo rm -f /etc/sudoer
 sudo usermod -aG video "$KIOSK_USER" 2>/dev/null || true
 sudo mkdir -p /var/lib/kiosk
 sudo touch /var/log/kiosk.log
+# Some of these run as root (watchdog, AirPlay watcher) and some as the session
+# user (output picker, display control), and they share this state and log - so
+# the user has to own them, or half the scripts fail on Permission denied while
+# still exiting 0.
+sudo chown "$KIOSK_USER:$KIOSK_USER" /var/lib/kiosk /var/log/kiosk.log
+sudo chmod 0775 /var/lib/kiosk
+sudo chmod 0664 /var/log/kiosk.log
 
 # -------------------------------------------------------------------- config --
 sudo mkdir -p /etc/kiosk
