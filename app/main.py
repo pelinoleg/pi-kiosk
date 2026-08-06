@@ -1,32 +1,21 @@
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 import subprocess
 import json
 import os
 import re
 import time
-import asyncio
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, AnyHttpUrl
+from typing import List, Dict, Any
+from pydantic import BaseModel
 import socket
 import psutil
 import logging
-from contextlib import contextmanager
-from enum import Enum
 import pathlib
 import uvicorn
 import random
-
 import requests
-
-import json
-from fastapi import Query
-
 import tempfile
-from fastapi import UploadFile, File, Form
-
-import pathlib
 
 
 def _detect_display_output() -> str:
@@ -93,8 +82,14 @@ app.add_middleware(
 # Константы
 MPV_SOCKET = "/tmp/mpvsocket"
 MPV_TIMEOUT = 3  # секунды для таймаута команд MPV
-CHROME_KIOSK_CMD = "/usr/bin/chromium --kiosk --disable-infobars --no-first-run --no-sandbox --window-size=1920,1080 --window-position=0,0"
+# Без --window-size: в режиме --kiosk окно само занимает весь экран, а зашитые
+# 1920x1080 промахиваются на любой другой панели (DSI — 800x480).
+CHROME_KIOSK_CMD = "/usr/bin/chromium --kiosk --disable-infobars --no-first-run --no-sandbox"
 DEFAULT_HTML_DIR = "/tmp/surface_control"
+# Файлы, которые лежат рядом с main.py
+CURRENT_DIR = pathlib.Path(__file__).parent.absolute()
+NOTIFICATION_FILE = os.path.join(CURRENT_DIR, "notification.mp3")
+REMOTE_HTML_FILE = os.path.join(CURRENT_DIR, "remote.html")
 
 # Создаем директории, если не существуют
 os.makedirs(DEFAULT_HTML_DIR, exist_ok=True)
@@ -104,43 +99,13 @@ os.makedirs(DEFAULT_HTML_DIR, exist_ok=True)
 # Вспомогательные классы и функции
 ########################
 
-class AudioOutput(BaseModel):
-    id: str
-    name: str
-    description: str
-    active: bool
-
-
-class VideoSource(Enum):
-    YOUTUBE = "youtube"
-    STREAM = "stream"
-    YOUTUBE_PLAYLIST = "youtube_playlist"
-    LOCAL = "local"
-
-
-class SlideshowItem(BaseModel):
-    url: str
-    time: int
-
-
 class CustomCommandRequest(BaseModel):
     command: str
 
 
-class ChromeSlideshowRequest(BaseModel):
-    slides: List[SlideshowItem]
-    transition_duration: int = 1
-
-
-# Контекстный менеджер для выполнения команд в фоне
-@contextmanager
-def background_process():
-    process = None
-    try:
-        yield lambda cmd: subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    finally:
-        if process and process.poll() is None:
-            process.terminate()
+def spawn(cmd: str) -> subprocess.Popen:
+    """Запускает команду в фоне, не дожидаясь завершения"""
+    return subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # Функция для выполнения команд и получения вывода
@@ -220,6 +185,18 @@ async def mpv_command(command, timeout=MPV_TIMEOUT):
         return {"error": str(e), "success": False}
 
 
+def get_current_volume():
+    """Текущая громкость Master в процентах, либо None, если её не удалось прочитать"""
+    result = run_command("amixer -D pulse get Master | grep -o '[0-9]*%' | head -1 | tr -d '%'")
+    value = result["stdout"].strip()
+    if result["success"] and value:
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return None
+
+
 def kill_chrome_processes():
     """Завершение всех процессов Chrome"""
     cmd = """
@@ -293,44 +270,7 @@ def get_processes():
     }
 
 
-# Функция для запуска Chrome с теми же параметрами, как в вашем n8n скрипте
-def run_chrome_slideshow(html_path: str) -> dict:
-    """Запускает Chrome с параметрами из n8n скрипта"""
-
-    # Параметры запуска Chrome точно как в вашем n8n скрипте
-    chrome_cmd = f"""export DISPLAY=:0
-xset dpms force on
-xset s off
-xset s noblank
-xset dpms 0 0 0
-xrandr --output {DISPLAY_OUTPUT} --auto
-/usr/bin/chromium \\
-    --kiosk \\
-    --app=file://{html_path} \\
-    --disable-infobars \\
-    --no-first-run \\
-    --window-size=1920,1080 \\
-    --window-position=0,0 \\
-    --disable-web-security \\
-    --disable-session-crashed-bubble \\
-    --disable-popup-blocking \\
-    --disable-background-timer-throttling \\
-    --disable-backgrounding-occluded-windows \\
-    --disable-renderer-backgrounding > /tmp/chrome_slideshow.log 2>&1 &"""
-
-    # Выполняем команду запуска
-    result = run_command(chrome_cmd)
-
-    return {
-        "success": result["success"],
-        "command": chrome_cmd,
-        "html_path": html_path
-    }
-
-
-# Функция для создания скрипта воспроизведения YouTube
-
-def create_immich_playlist(ip: str, api_key: str, videos: List[dict]) -> str:
+def create_immich_playlist(ip: str, videos: List[dict]) -> str:
     """Создает M3U плейлист для видео из Immich"""
     playlist_content = '#EXTM3U\n'
 
@@ -424,26 +364,22 @@ def save_immich_files(playlist_content: str, script_content: str) -> None:
 @app.get("/")
 async def root():
     """Корневой эндпоинт с информацией об API"""
+    # Список маршрутов собирается из самого приложения: рукописный перечень
+    # здесь годами отставал от реальности.
+    endpoints = {}
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = getattr(route, "methods", None)
+        if not path.startswith("/surface") or not methods:
+            continue
+        doc = (route.endpoint.__doc__ or "").strip().splitlines()
+        for method in sorted(m for m in methods if m != "HEAD"):
+            endpoints[f"{method} {path}"] = doc[0] if doc else ""
     return {
         "name": "Surface Control API",
         "version": "1.0.0",
         "description": "API для управления отображением и аудио на Surface мини-компьютере",
-        "endpoints": {
-            "GET /surface/status": "Получение статуса системы",
-            "GET /surface/processes": "Список запущенных процессов",
-            "GET /surface/display-state": "Статус дисплея (on/off)",
-            "GET /surface/display-on": "Включение дисплея",
-            "GET /surface/display-off": "Выключение дисплея",
-            "GET /surface/playback-status": "Статус воспроизведения MPV",
-            "GET /surface/audio-outputs": "Список аудио выходов",
-            "GET /surface/system-volume": "Уровень громкости",
-            "POST /surface/system-volume": "Установка громкости",
-            "GET /surface/airplay-state": "Состояние приёма AirPlay",
-            "GET /surface/airplay-on": "Включить приём AirPlay",
-            "GET /surface/airplay-off": "Выключить приём AirPlay",
-            "GET /surface/airplay-kick": "Сбросить зависшего AirPlay-клиента",
-            # И другие эндпоинты...
-        }
+        "endpoints": dict(sorted(endpoints.items(), key=lambda kv: kv[0].split(" ", 1)[1])),
     }
 
 
@@ -468,10 +404,7 @@ async def system_status():
         chrome_active = len(chrome_processes) > 0
 
         # Громкость системы
-        volume_cmd = "amixer -D pulse get Master | grep -o '[0-9]*%' | head -1 | tr -d '%'"
-        volume_result = run_command(volume_cmd)
-        volume_stdout = volume_result["stdout"].strip()
-        volume = int(volume_stdout) if volume_result["success"] and volume_stdout else 0
+        volume = get_current_volume() or 0
 
         # Аудио выход
         audio_output_cmd = "pactl get-default-sink"
@@ -685,20 +618,10 @@ async def get_audio_outputs():
 @app.get("/surface/system-volume")
 async def get_system_volume():
     """Получение текущей громкости системы"""
-    cmd = "amixer -D pulse get Master | grep -o '[0-9]*%' | head -1 | tr -d '%'"
-    result = run_command(cmd)
-    if result["success"]:
-        volume_str = result["stdout"].strip()
-        if not volume_str:
-            # Обработка случая с пустой строкой
-            raise HTTPException(status_code=500, detail="Получена пустая строка при запросе громкости")
-        try:
-            volume = int(volume_str)
-            return {"volume": volume}
-        except ValueError:
-            raise HTTPException(status_code=500, detail=f"Не удалось преобразовать громкость '{volume_str}' в число")
-    else:
-        raise HTTPException(status_code=500, detail=f"Ошибка получения громкости: {result['stderr']}")
+    volume = get_current_volume()
+    if volume is None:
+        raise HTTPException(status_code=500, detail="Не удалось прочитать громкость")
+    return {"volume": volume}
 
 
 @app.get("/surface/system-volume/{volume}")
@@ -737,18 +660,10 @@ async def system_volume_up():
     result = run_command(cmd)
 
     if result["success"]:
-        # Получаем текущее значение громкости
-        volume_cmd = "amixer -D pulse get Master | grep -o '[0-9]*%' | head -1 | tr -d '%'"
-        volume_result = run_command(volume_cmd)
-
-        if volume_result["success"]:
-            try:
-                volume = int(volume_result["stdout"].strip())
-                return {"volume": volume, "message": f"Громкость увеличена до {volume}%"}
-            except ValueError:
-                return {"success": True, "message": "Громкость увеличена на 5%"}
-        else:
-            return {"success": True, "message": "Громкость увеличена на 5%"}
+        volume = get_current_volume()
+        if volume is not None:
+            return {"volume": volume, "message": f"Громкость увеличена до {volume}%"}
+        return {"success": True, "message": "Громкость увеличена на 5%"}
     else:
         raise HTTPException(status_code=500, detail=f"Ошибка увеличения громкости: {result['stderr']}")
 
@@ -760,18 +675,10 @@ async def system_volume_down():
     result = run_command(cmd)
 
     if result["success"]:
-        # Получаем текущее значение громкости
-        volume_cmd = "amixer -D pulse get Master | grep -o '[0-9]*%' | head -1 | tr -d '%'"
-        volume_result = run_command(volume_cmd)
-
-        if volume_result["success"]:
-            try:
-                volume = int(volume_result["stdout"].strip())
-                return {"volume": volume, "message": f"Громкость уменьшена до {volume}%"}
-            except ValueError:
-                return {"success": True, "message": "Громкость уменьшена на 5%"}
-        else:
-            return {"success": True, "message": "Громкость уменьшена на 5%"}
+        volume = get_current_volume()
+        if volume is not None:
+            return {"volume": volume, "message": f"Громкость уменьшена до {volume}%"}
+        return {"success": True, "message": "Громкость уменьшена на 5%"}
     else:
         raise HTTPException(status_code=500, detail=f"Ошибка уменьшения громкости: {result['stderr']}")
 
@@ -935,11 +842,8 @@ async def kill_all():
 @app.get("/surface/reboot")
 async def reboot_system():
     """Перезагрузка системы"""
-    cmd = "sudo /sbin/reboot"
-
     # Запускаем команду в фоне и не ждем результата
-    with background_process() as run_bg:
-        run_bg(cmd)
+    spawn("sudo /sbin/reboot")
 
     return {"message": "Запрос на перезагрузку отправлен"}
 
@@ -955,7 +859,7 @@ AIRPLAY_STATE_FILE = "/var/lib/kiosk/airplay_client"
 KIOSK_RESTORE_UNIT = os.environ.get("KIOSK_RESTORE_UNIT", "kiosk-restore.service")
 
 
-def _airplay_unit_state(unit: str) -> str:
+def unit_state(unit: str) -> str:
     result = run_command(f"systemctl is-active {unit}")
     return result["stdout"].strip() or "unknown"
 
@@ -994,8 +898,8 @@ async def airplay_state():
     """Состояние приёма AirPlay: сервисы и активная сессия"""
     clients = _airplay_session_clients()
     return {
-        "video": _airplay_unit_state(AIRPLAY_VIDEO_UNIT),
-        "audio": _airplay_unit_state(AIRPLAY_AUDIO_UNIT),
+        "video": unit_state(AIRPLAY_VIDEO_UNIT),
+        "audio": unit_state(AIRPLAY_AUDIO_UNIT),
         "session_active": bool(clients),
         "clients": clients,
     }
@@ -1009,8 +913,8 @@ async def airplay_on():
         raise HTTPException(status_code=500, detail=f"Не удалось запустить AirPlay: {result['stderr']}")
     return {
         "message": "AirPlay включён",
-        "video": _airplay_unit_state(AIRPLAY_VIDEO_UNIT),
-        "audio": _airplay_unit_state(AIRPLAY_AUDIO_UNIT),
+        "video": unit_state(AIRPLAY_VIDEO_UNIT),
+        "audio": unit_state(AIRPLAY_AUDIO_UNIT),
     }
 
 
@@ -1036,6 +940,100 @@ async def airplay_kick():
         raise HTTPException(status_code=500, detail=f"Не удалось перезапустить AirPlay: {result['stderr']}")
     _airplay_restore_kiosk()
     return {"message": "AirPlay-приёмник перезапущен", "dropped_clients": clients}
+
+
+########################
+# Диагностика и обслуживание
+########################
+
+KIOSK_LOG_FILE = "/var/log/kiosk.log"
+SCREENSHOT_FILE = "/tmp/surface_screenshot.png"
+HEALTH_UNITS = (
+    "xinit.service", "surface-api.service", "net-watchdog.timer",
+    "kiosk-restore.service", "kiosk-output.timer",
+    "airplay-video.service", "airplay-audio.service", "airplay-watch.timer",
+)
+
+
+@app.get("/surface/screenshot")
+async def take_screenshot():
+    """Скриншот текущего экрана (PNG)"""
+    result = run_command(f"DISPLAY=:0 scrot -o {SCREENSHOT_FILE}")
+    if not result["success"] or not os.path.exists(SCREENSHOT_FILE):
+        raise HTTPException(status_code=500, detail=f"scrot не отработал: {result['stderr'].strip()}")
+    return FileResponse(SCREENSHOT_FILE, media_type="image/png", filename="kiosk-screen.png")
+
+
+@app.get("/surface/health")
+async def health():
+    """Сводное состояние киоска одним JSON"""
+    units = {unit: unit_state(unit) for unit in HEALTH_UNITS}
+
+    def state_file(name):
+        try:
+            return open(f"/var/lib/kiosk/{name}").read().strip()
+        except OSError:
+            return None
+
+    backlight = {}
+    for p in pathlib.Path("/sys/class/backlight").glob("*/bl_power"):
+        try:
+            backlight[p.parent.name] = int(p.read_text().strip())
+        except (OSError, ValueError):
+            pass
+
+    chromium = sum(1 for p in psutil.process_iter(["name"])
+                   if "chrom" in (p.info["name"] or "").lower())
+    clients = _airplay_session_clients()
+
+    return {
+        "units": units,
+        "display": {
+            "output": DISPLAY_OUTPUT,
+            "active_output": state_file("active_output"),
+            # 0 = подсветка горит, 4 = панель погашена
+            "backlight": backlight,
+        },
+        "watchdog_fail_count": state_file("fail_count"),
+        "airplay": {"session_active": bool(clients), "clients": clients},
+        "browser_processes": chromium,
+        "mpv_active": os.path.exists(MPV_SOCKET),
+        "power": {
+            # 0x0 = питание в порядке; всё другое — троттлинг или недонапряжение
+            "throttled": run_command("vcgencmd get_throttled")["stdout"].strip() or None,
+            "temperature": run_command("vcgencmd measure_temp")["stdout"].strip() or None,
+        },
+        "system": {
+            "uptime_seconds": int(time.time() - psutil.boot_time()),
+            "load_average": os.getloadavg(),
+            "memory_used_percent": psutil.virtual_memory().percent,
+            "disk_used_percent": psutil.disk_usage("/").percent,
+        },
+    }
+
+
+@app.get("/surface/logs")
+async def tail_logs(lines: int = Query(50, ge=1, le=1000)):
+    """Хвост общего лога киоска (/var/log/kiosk.log)"""
+    result = run_command(f"tail -n {lines} {KIOSK_LOG_FILE}")
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=f"Не удалось прочитать лог: {result['stderr'].strip()}")
+    return {"file": KIOSK_LOG_FILE, "lines": result["stdout"].splitlines()}
+
+
+@app.get("/surface/restore")
+async def restore_screen():
+    """Вернуть на экран то, что киоск должен показывать (kiosk-restore)"""
+    _airplay_restore_kiosk()
+    return {"message": "Восстановление запущено, экран вернётся через несколько секунд"}
+
+
+@app.get("/surface/remote")
+async def remote_ui():
+    """Веб-пульт: управление киоском с телефона"""
+    if not os.path.exists(REMOTE_HTML_FILE):
+        raise HTTPException(status_code=404, detail="remote.html не найден рядом с main.py")
+    return FileResponse(REMOTE_HTML_FILE, media_type="text/html")
 
 
 @app.post("/surface/custom-command")
@@ -1066,11 +1064,6 @@ async def custom_command_get(command: str = Query(...)):
         "stderr": result["stderr"],
         "exit_code": result["exit_code"]
     }
-
-
-# Определяем путь к файлу уведомления относительно текущего py файла
-CURRENT_DIR = pathlib.Path(__file__).parent.absolute()
-NOTIFICATION_FILE = os.path.join(CURRENT_DIR, "notification.mp3")
 
 
 @app.post("/surface/tts-play-upload")
@@ -1153,8 +1146,7 @@ async def play_uploaded_audio(
             play_cmd = f"mpv --no-video --really-quiet {temp_path}"
 
         # Запускаем воспроизведение в фоне
-        with background_process() as run_bg:
-            process = run_bg(f"{play_cmd} > /tmp/tts_playback.log 2>&1")
+        spawn(f"{play_cmd} > /tmp/tts_playback.log 2>&1")
 
         # Получаем длительность аудио (если возможно)
         duration_cmd = f"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 {temp_path}"
@@ -1205,10 +1197,7 @@ async def chrome_tabs_slideshow(
     Открывает URL в единственном окне Chrome и циклически отображает их через iframe с заданными интервалами.
     """
     # Создаем директорию для логов
-    run_command("mkdir -p /tmp/chrome_tabs_logs")
-
-    kill_chrome_processes()
-    kill_mpv_processes()
+    os.makedirs("/tmp/chrome_tabs_logs", exist_ok=True)
 
     # Сохраняем подробный лог действий
     log_file = f"/tmp/chrome_tabs_logs/debug_{int(time.time())}.log"
@@ -1552,7 +1541,7 @@ async def play_immich_album(
 
         # Создаем плейлист
         logger.info(f"Создание плейлиста из {len(limited_videos)} видео")
-        playlist_content = create_immich_playlist(ip, api_key, limited_videos)
+        playlist_content = create_immich_playlist(ip, limited_videos)
 
         # Создаем скрипт для запуска
         script_content = create_immich_script(ip, api_key)
@@ -1585,24 +1574,32 @@ async def play_immich_album(
 
 @app.get("/surface/webcam")
 async def show_webcam(
-        url: str = Query("http://2.136.193.46:8081/cgi-bin/CGIProxy.fcgi", description="URL веб-камеры"),
-        usr: str = Query("Cnb", description="Имя пользователя для веб-камеры"),
-        pwd: str = Query("Club@00", description="Пароль для веб-камеры"),
+        url: str = Query(..., description="URL веб-камеры"),
+        usr: str = Query("", description="Имя пользователя для веб-камеры"),
+        pwd: str = Query("", description="Пароль для веб-камеры"),
         refresh_rate: int = Query(1000, description="Частота обновления изображения (мс)"),
-        location: str = Query("Badalona", description="Название местоположения"),
-        show_temp: bool = Query(True, description="Показывать информацию о температуре")
+        location: str = Query("", description="Название местоположения"),
+        show_temp: bool = Query(False, description="Показывать температуру моря (нужен weather_key)"),
+        weather_key: str = Query("", description="API-ключ worldweatheronline.com"),
+        weather_query: str = Query("41.4333,2.2333", description="Координаты для запроса погоды")
 ):
     """
     Отображает поток с веб-камеры в Chrome в режиме киоска.
     Позволяет отображать информацию о температуре моря.
+
+    Репозиторий публичный, поэтому адрес камеры, логин, пароль и ключ погоды
+    передаются только параметрами — в коде их быть не должно.
     """
     # Останавливаем все текущие процессы воспроизведения
     kill_chrome_processes()
     kill_mpv_processes()
 
+    show_temp = show_temp and bool(weather_key)
+
     try:
         # Создаем HTML для отображения веб-камеры
-        html_content = create_webcam_html(url, usr, pwd, refresh_rate, location, show_temp)
+        html_content = create_webcam_html(url, usr, pwd, refresh_rate, location,
+                                          show_temp, weather_key, weather_query)
 
         # Имя файла с временной меткой, чтобы избежать кэширования
         timestamp = int(time.time())
@@ -1654,9 +1651,57 @@ def create_webcam_html(
         pwd: str,
         refresh_rate: int,
         location: str,
-        show_temp: bool
+        show_temp: bool,
+        weather_key: str = "",
+        weather_query: str = ""
 ) -> str:
     """Создает HTML для отображения веб-камеры с информацией о температуре"""
+
+    # Блоки температуры собираются заранее отдельными f-строками. Раньше они
+    # были вложенными обычными литералами внутри общей f-строки: `{{` в них не
+    # разэкранировались, и при show_temp=true в страницу попадал синтаксически
+    # битый JS, который ломал весь <script> вместе с обновлением картинки.
+    weather_div = f"""
+        <div id="weather-info">
+            <div class="location">{location}</div>
+            <div class="temp-label">Sea temperature:</div>
+            <div class="temp-value" id="sea-temp">
+                <span class="loading">Loading...</span>
+            </div>
+        </div>
+    """ if show_temp else ""
+
+    weather_js = f"""
+        // Функция для получения данных о температуре моря
+        async function getSeaTemperature() {{
+            try {{
+                const response = await fetch('https://api.worldweatheronline.com/premium/v1/marine.ashx?key={weather_key}&q={weather_query}&format=json&includeLocation=yes');
+                const data = await response.json();
+
+                if (data && data.data && data.data.weather && data.data.weather[0] && data.data.weather[0].hourly) {{
+                    // Ближайший трёхчасовой блок прогноза (0, 3, 6, ...)
+                    const timeIndex = Math.floor(new Date().getHours() / 3);
+                    const hourData = data.data.weather[0].hourly[timeIndex];
+                    if (hourData && hourData.waterTemp_C) {{
+                        document.getElementById('sea-temp').innerHTML = hourData.waterTemp_C + '°C';
+                    }} else {{
+                        document.getElementById('sea-temp').innerHTML = 'N/A';
+                    }}
+                }} else {{
+                    document.getElementById('sea-temp').innerHTML = 'N/A';
+                }}
+            }} catch (error) {{
+                console.error('Ошибка при получении температуры:', error);
+                document.getElementById('sea-temp').innerHTML = 'N/A';
+            }}
+        }}
+    """ if show_temp else ""
+
+    weather_js_init = """
+        // Получение температуры при загрузке страницы и обновление каждые 30 минут
+        getSeaTemperature();
+        setInterval(getSeaTemperature, 30 * 60 * 1000);
+    """ if show_temp else ""
 
     # Основной шаблон HTML
     html = f"""<!DOCTYPE html>
@@ -1742,15 +1787,7 @@ def create_webcam_html(
     <div id="webcam-container">
         <img id="webcam-image" alt="Webcam Feed">
 
-        {'''
-        <div id="weather-info">
-            <div class="location">{}</div>
-            <div class="temp-label">Sea temperature:</div>
-            <div class="temp-value" id="sea-temp">
-                <span class="loading">Loading...</span>
-            </div>
-        </div>
-        '''.format(location) if show_temp else ''}
+        {weather_div}
 
         <div class="date-time" id="datetime"></div>
     </div>
@@ -1775,34 +1812,7 @@ def create_webcam_html(
         updateDateTime();
         setInterval(updateDateTime, 1000);
 
-        {'''
-        // Функция для получения данных о температуре моря
-        async function getSeaTemperature() {{
-            try {{
-                const response = await fetch('https://api.worldweatheronline.com/premium/v1/marine.ashx?key=481ef4eeeb9e4e2ebb395728251203&q=41.4333,2.2333&format=json&includeLocation=yes');
-                const data = await response.json();
-
-                if (data && data.data && data.data.weather && data.data.weather[0] && data.data.weather[0].hourly) {{
-                    // Получаем текущий час
-                    const currentHour = new Date().getHours();
-                    // Определяем ближайший временной блок (0, 3, 6, 9, 12, 15, 18, 21)
-                    const timeIndex = Math.floor(currentHour / 3);
-                    const hourData = data.data.weather[0].hourly[timeIndex];
-
-                    if (hourData && hourData.waterTemp_C) {{
-                        document.getElementById('sea-temp').innerHTML = hourData.waterTemp_C + '°C';
-                    }} else {{
-                        document.getElementById('sea-temp').innerHTML = 'N/A';
-                    }}
-                }} else {{
-                    document.getElementById('sea-temp').innerHTML = 'N/A';
-                }}
-            }} catch (error) {{
-                console.error('Ошибка при получении температуры:', error);
-                document.getElementById('sea-temp').innerHTML = 'N/A';
-            }}
-        }}
-        ''' if show_temp else ''}
+        {weather_js}
 
         // Функция обновления изображения веб-камеры
         let counter = 0;
@@ -1824,13 +1834,7 @@ def create_webcam_html(
         // Запуск обновления веб-камеры
         refreshWebcam();
 
-        {'''
-        // Получение температуры при загрузке страницы
-        getSeaTemperature();
-
-        // Обновление температуры каждые 30 минут
-        setInterval(getSeaTemperature, 30 * 60 * 1000);
-        ''' if show_temp else ''}
+        {weather_js_init}
     </script>
 </body>
 </html>
@@ -1839,111 +1843,80 @@ def create_webcam_html(
     return html
 
 
-# Эндпоинты для добавления в main.py
+########################
+# Часы поверх экрана
+########################
+
+# Часы лежат рядом с main.py и называются clock.py. Раньше здесь было зашито
+# clock_tk.py — файла с таким именем нет, но запуск «удавался» (команда уходит
+# в фон через &, код возврата всегда 0), и часы молча не появлялись.
+# Системный python3, не venv: PyQt5 ставится через apt (python3-pyqt5).
+CLOCK_CMD = f"/usr/bin/python3 {CURRENT_DIR}/clock.py"
+# Скобка в начале — чтобы pgrep/pkill не ловили сам shell, который их
+# запускает: его командная строка содержит паттерн (грабли CLAUDE.md §6.13).
+CLOCK_PATTERN = f"[/]usr/bin/python3 {CURRENT_DIR}/clock.py"
+
+
+def clock_pid():
+    """PID процесса часов, либо None"""
+    result = run_command(f"pgrep -f '{CLOCK_PATTERN}' | head -1")
+    pid = result["stdout"].strip()
+    return int(pid) if pid.isdigit() else None
+
+
+def clock_start():
+    spawn(f"export DISPLAY=:0 && {CLOCK_CMD} > /tmp/overlay_clock.log 2>&1")
+    time.sleep(0.5)
+    return clock_pid() is not None
+
+
+def clock_stop():
+    run_command(f"pkill -9 -f '{CLOCK_PATTERN}' || true")
+    return clock_pid() is None
+
+
 @app.get("/surface/clock-show")
 async def show_clock():
     """Запускает отображение часов на экране"""
-    # Remove these two lines:
-    # kill_chrome_processes()
-    # kill_mpv_processes()
-
-    # Запускаем часы из файла clock_tk.py
-    cmd = "export DISPLAY=:0 && /usr/bin/python3 clock_tk.py > /tmp/overlay_clock.log 2>&1 &"
-    result = run_command(cmd)
-
-    if result["success"]:
-        return {
-            "status": "success",
-            "message": "Часы запущены",
-            "log_file": "/tmp/overlay_clock.log"
-        }
-    else:
-        raise HTTPException(status_code=500, detail=f"Ошибка запуска часов: {result['stderr']}")
+    if clock_start():
+        return {"status": "success", "message": "Часы запущены", "log_file": "/tmp/overlay_clock.log"}
+    raise HTTPException(status_code=500, detail="Часы не запустились, смотри /tmp/overlay_clock.log")
 
 
 @app.get("/surface/clock-hide")
 async def hide_clock():
     """Останавливает отображение часов"""
-    # Более надежный способ завершения процесса
-    cmd = "pkill -9 -f '/usr/bin/python3 clock_tk.py' || true"
-    result = run_command(cmd)
-
-    # Проверяем, что процесс действительно остановлен
-    check_cmd = "ps aux | grep '/usr/bin/python3 clock_tk.py' | grep -v grep || echo 'not_running'"
-    check_result = run_command(check_cmd)
-    is_stopped = "not_running" in check_result["stdout"] or check_result["stdout"].strip() == ""
-
+    stopped = clock_stop()
     return {
-        "status": "success" if is_stopped else "failed",
-        "message": "Часы остановлены" if is_stopped else "Не удалось остановить часы"
+        "status": "success" if stopped else "failed",
+        "message": "Часы остановлены" if stopped else "Не удалось остановить часы"
     }
 
 
 @app.get("/surface/clock-status")
 async def clock_status():
     """Проверяет, запущены ли часы"""
-    # Более точная проверка процесса
-    cmd = "ps aux | grep '/usr/bin/python3 clock_tk.py' | grep -v grep || echo 'not_running'"
-    result = run_command(cmd)
-
-    is_running = "not_running" not in result["stdout"] and result["stdout"].strip() != ""
-
-    pid = None
-    if is_running and len(result["stdout"].split()) > 1:
-        try:
-            pid = int(result["stdout"].split()[1])
-        except (ValueError, IndexError):
-            pass
-
-    return {
-        "status": "running" if is_running else "stopped",
-        "pid": pid
-    }
+    pid = clock_pid()
+    return {"status": "running" if pid else "stopped", "pid": pid}
 
 
 @app.get("/surface/clock-toggle")
 async def toggle_clock():
     """Переключает отображение часов (вкл/выкл)"""
-    # Используем более надежный способ проверки запущенных часов
-    cmd = "ps aux | grep '/usr/bin/python3 clock_tk.py' | grep -v grep || echo 'not_running'"
-    result = run_command(cmd)
-
-    is_running = "not_running" not in result["stdout"] and result["stdout"].strip() != ""
-
-    if is_running:
-        # Часы запущены, останавливаем их
-        kill_cmd = "pkill -9 -f '/usr/bin/python3 clock_tk.py' || true"
-        kill_result = run_command(kill_cmd)
-
-        # Проверяем, что процесс действительно остановлен
-        check_cmd = "ps aux | grep '/usr/bin/python3 clock_tk.py' | grep -v grep || echo 'not_running'"
-        check_result = run_command(check_cmd)
-        is_stopped = "not_running" in check_result["stdout"] or check_result["stdout"].strip() == ""
-
+    if clock_pid():
+        stopped = clock_stop()
         return {
-            "status": "success" if is_stopped else "failed",
-            "message": "Часы остановлены" if is_stopped else "Не удалось остановить часы",
+            "status": "success" if stopped else "failed",
+            "message": "Часы остановлены" if stopped else "Не удалось остановить часы",
             "action": "stop"
         }
-    else:
-        # Часы не запущены, запускаем их
-        start_cmd = "export DISPLAY=:0 && /usr/bin/python3 clock_tk.py > /tmp/overlay_clock.log 2>&1 &"
-        start_result = run_command(start_cmd)
-
-        # Даем процессу время на запуск
-        time.sleep(0.5)
-
-        # Проверяем, что процесс запущен
-        check_cmd = "ps aux | grep '/usr/bin/python3 clock_tk.py' | grep -v grep || echo 'not_running'"
-        check_result = run_command(check_cmd)
-        is_started = "not_running" not in check_result["stdout"] and check_result["stdout"].strip() != ""
-
-        return {
-            "status": "success" if is_started else "failed",
-            "message": "Часы запущены" if is_started else "Не удалось запустить часы",
-            "action": "start",
-            "log_file": "/tmp/overlay_clock.log" if is_started else None
-        }
+    started = clock_start()
+    return {
+        "status": "success" if started else "failed",
+        "message": "Часы запущены" if started else "Не удалось запустить часы",
+        "action": "start",
+        "log_file": "/tmp/overlay_clock.log" if started else None
+    }
 
 
 if __name__ == "__main__":

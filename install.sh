@@ -83,10 +83,12 @@ sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     xserver-xorg x11-xserver-utils xinit openbox unclutter \
     chromium \
-    python3 python3-venv python3-pip \
+    python3 python3-venv python3-pip python3-pyqt5 \
     mpv ffmpeg mpg123 pulseaudio alsa-utils \
-    network-manager curl wget git socat \
+    network-manager curl wget git socat scrot \
     >/dev/null || die "Package installation failed."
+# python3-pyqt5: часы (clock.py) рисуются системным python — PyQt5 не в venv.
+# scrot: эндпоинт /surface/screenshot.
 
 # Raspberry Pi OS ships chromium; plain Debian calls it chromium-browser. Make
 # sure at least one of them exists, and that /usr/bin/chromium resolves.
@@ -110,7 +112,7 @@ sudo -u "$KIOSK_USER" mkdir -p "$INSTALL_DIR"
 SRC_APP=$(cd "$SRC/app" && pwd)
 DST_APP=$(cd "$INSTALL_DIR" && pwd)
 if [ "$SRC_APP" != "$DST_APP" ]; then
-    sudo cp "$SRC/app/main.py" "$SRC/app/clock.py" "$SRC/app/requirements.txt" "$INSTALL_DIR/"
+    sudo cp "$SRC/app/main.py" "$SRC/app/clock.py" "$SRC/app/remote.html" "$SRC/app/requirements.txt" "$INSTALL_DIR/"
     [ -f "$SRC/app/notification.mp3" ] && sudo cp "$SRC/app/notification.mp3" "$INSTALL_DIR/"
 else
     info "app already in place (installing into the checkout)"

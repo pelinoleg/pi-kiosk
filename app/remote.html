@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Киоск — пульт</title>
+<style>
+  :root {
+    --bg: #101418; --card: #1a2027; --line: #2a323c;
+    --fg: #e8edf2; --dim: #8b98a5; --accent: #4fc3f7;
+    --ok: #66bb6a; --warn: #ffa726; --bad: #ef5350;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    max-width: 480px; margin-inline: auto;
+  }
+  h1 { font-size: 20px; margin: 4px 0 16px; }
+  h1 small { color: var(--dim); font-weight: normal; font-size: 13px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+             color: var(--dim); margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    flex: 1 1 calc(50% - 8px); min-height: 48px; border-radius: 10px;
+    border: 1px solid var(--line); background: #232b34; color: var(--fg);
+    font-size: 15px; cursor: pointer;
+  }
+  button:active { background: #2e3946; }
+  button.primary { background: #114d66; border-color: #1a6b8d; }
+  button.danger  { background: #55201f; border-color: #7c2f2d; }
+  button.wide { flex-basis: 100%; }
+  .status-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+                 font-size: 14px; }
+  .status-grid dt { color: var(--dim); }
+  .status-grid dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; }
+  .pill.ok   { background: #1d3a22; color: var(--ok); }
+  .pill.bad  { background: #46201f; color: var(--bad); }
+  .pill.warn { background: #4a3417; color: var(--warn); }
+  #shot { width: 100%; border-radius: 10px; border: 1px solid var(--line);
+          display: none; margin-top: 10px; }
+  #toast {
+    position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    background: #000c; color: var(--fg); padding: 10px 18px; border-radius: 10px;
+    font-size: 14px; opacity: 0; transition: opacity .25s; pointer-events: none;
+    max-width: 90vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #toast.show { opacity: 1; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  #vol-label { color: var(--dim); font-size: 13px; }
+  pre#log {
+    background: #0b0e12; border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px; font-size: 11px; line-height: 1.5; overflow-x: auto;
+    max-height: 260px; overflow-y: auto; display: none; margin: 10px 0 0;
+  }
+</style>
+</head>
+<body>
+<h1>Киоск <small id="host"></small></h1>
+
+<div class="card">
+  <h2>Состояние</h2>
+  <dl class="status-grid" id="status">
+    <dt>Загрузка…</dt><dd></dd>
+  </dl>
+  <div class="row" style="margin-top:10px">
+    <button onclick="refreshStatus()">Обновить</button>
+    <button onclick="toggleShot()">Скриншот</button>
+  </div>
+  <img id="shot" alt="Экран киоска">
+</div>
+
+<div class="card">
+  <h2>Экран</h2>
+  <div class="row">
+    <button class="primary wide" onclick="call('/surface/restore', 'Возвращаю киоск…')">Вернуть киоск</button>
+    <button onclick="call('/surface/display-on', 'Экран включён')">Экран вкл</button>
+    <button onclick="call('/surface/display-off', 'Экран выключен')">Экран выкл</button>
+    <button class="wide" onclick="call('/surface/kill-all', 'Браузер и плеер остановлены')">Убрать всё с экрана</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>AirPlay</h2>
+  <div class="row">
+    <button onclick="call('/surface/airplay-on', 'AirPlay включён')">Включить</button>
+    <button onclick="call('/surface/airplay-off', 'AirPlay выключен')">Выключить</button>
+    <button class="wide" onclick="call('/surface/airplay-kick', 'Клиент сброшен')">Сбросить зависший телефон</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Звук</h2>
+  <div id="vol-label">Громкость: …</div>
+  <input type="range" id="vol" min="0" max="150" step="5"
+         onchange="setVolume(this.value)">
+  <div class="row" style="margin-top:8px">
+    <button onclick="call('/surface/toggle-mute', 'Звук переключён')">Вкл/выкл звук</button>
+    <button onclick="call('/surface/clock-toggle', 'Часы переключены')">Часы вкл/выкл</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Система</h2>
+  <div class="row">
+    <button onclick="showLogs()">Показать лог</button>
+    <button class="danger" onclick="rebootKiosk()">Перезагрузить</button>
+  </div>
+  <pre id="log"></pre>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  document.getElementById('host').textContent = location.hostname;
+
+  let toastTimer;
+  function toast(msg, isError) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.color = isError ? 'var(--bad)' : 'var(--fg)';
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  async function call(path, okMsg) {
+    toast('…');
+    try {
+      const r = await fetch(path);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || r.status);
+      toast(okMsg || data.message || 'Готово');
+      setTimeout(refreshStatus, 1500);
+    } catch (e) {
+      toast('Ошибка: ' + e.message, true);
+    }
+  }
+
+  function pill(state, okValues) {
+    const ok = okValues.includes(state);
+    return `<span class="pill ${ok ? 'ok' : 'bad'}">${state ?? '?'}</span>`;
+  }
+
+  async function refreshStatus() {
+    try {
+      const h = await (await fetch('/surface/health')).json();
+      const backlightOn = Object.values(h.display.backlight || {}).every(v => v === 0);
+      const throttled = h.power.throttled || '';
+      const powerOk = throttled.endsWith('0x0');
+      const up = h.system.uptime_seconds;
+      const upStr = up >= 86400 ? Math.floor(up / 86400) + 'д ' + Math.floor(up % 86400 / 3600) + 'ч'
+                  : Math.floor(up / 3600) + 'ч ' + Math.floor(up % 3600 / 60) + 'м';
+      const rows = [
+        ['Браузер', h.browser_processes > 0 ? pill('работает', ['работает']) : pill('нет', [])],
+        ['Экран', h.display.active_output ?? h.display.output,],
+        ['Подсветка', backlightOn ? pill('горит', ['горит']) : pill('погашена', [])],
+        ['AirPlay', h.airplay.session_active
+            ? pill('трансляция: ' + h.airplay.clients.join(', '), [])
+            : pill(h.units['airplay-video.service'], ['active'])],
+        ['Питание', powerOk ? pill('ок', ['ок']) : pill(throttled || '?', [])],
+        ['Температура', (h.power.temperature || '?').replace('temp=', '')],
+        ['Аптайм', upStr],
+        ['Память', h.system.memory_used_percent + '%'],
+      ];
+      const bad = Object.entries(h.units).filter(([, s]) => s !== 'active');
+      if (bad.length) rows.push(['Сервисы', bad.map(([u, s]) => u.replace(/\.(service|timer)$/, '') + ': ' + s).join('; ')]);
+      document.getElementById('status').innerHTML =
+        rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    } catch (e) {
+      document.getElementById('status').innerHTML =
+        `<dt>API</dt><dd>${pill('недоступен', [])}</dd>`;
+    }
+    try {
+      const v = await (await fetch('/surface/system-volume')).json();
+      document.getElementById('vol').value = v.volume;
+      document.getElementById('vol-label').textContent = 'Громкость: ' + v.volume + '%';
+    } catch (e) { /* без звука статус всё равно полезен */ }
+  }
+
+  async function setVolume(v) {
+    document.getElementById('vol-label').textContent = 'Громкость: ' + v + '%';
+    await call('/surface/system-volume/' + v, 'Громкость: ' + v + '%');
+  }
+
+  function toggleShot() {
+    const img = document.getElementById('shot');
+    if (img.style.display === 'block') { img.style.display = 'none'; return; }
+    img.src = '/surface/screenshot?ts=' + Date.now();
+    img.onload = () => { img.style.display = 'block'; };
+    img.onerror = () => toast('Скриншот не получился', true);
+  }
+
+  async function showLogs() {
+    const pre = document.getElementById('log');
+    if (pre.style.display === 'block') { pre.style.display = 'none'; return; }
+    try {
+      const data = await (await fetch('/surface/logs?lines=40')).json();
+      pre.textContent = data.lines.join('\n') || '(пусто)';
+      pre.style.display = 'block';
+      pre.scrollTop = pre.scrollHeight;
+    } catch (e) {
+      toast('Лог недоступен: ' + e.message, true);
+    }
+  }
+
+  function rebootKiosk() {
+    if (confirm('Точно перезагрузить киоск?')) {
+      call('/surface/reboot', 'Перезагружается…');
+    }
+  }
+
+  refreshStatus();
+  setInterval(refreshStatus, 30000);
+</script>
+</body>
+</html>
