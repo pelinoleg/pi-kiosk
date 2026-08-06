@@ -240,8 +240,15 @@ GET  /surface/clock-show            /surface/clock-hide       /surface/clock-tog
 GET  /surface/system-volume/{0-100} /surface/toggle-mute      /surface/audio-outputs
 GET  /surface/playback-toggle       /surface/playback-next    /surface/playback-status
 GET  /surface/webcam                /surface/immich/album     /surface/reboot
+GET  /surface/airplay-state         /surface/airplay-on       /surface/airplay-off
+GET  /surface/airplay-kick
 POST /surface/custom-command        /surface/tts-play-upload
 ```
+
+AirPlay: `airplay-state` показывает состояние сервисов и адреса подключённых
+клиентов, `airplay-on`/`airplay-off` включают и выключают приём (при
+выключении киоск сам возвращается на экран), `airplay-kick` сбрасывает
+зависшего клиента перезапуском приёмника.
 
 Ротация вкладок: `urls` и `times` — параллельные списки, `times` в секундах.
 

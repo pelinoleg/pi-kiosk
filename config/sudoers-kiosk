@@ -3,3 +3,8 @@
 # must drive, and it resolves that once at import - so the session user needs
 # to be able to restart just that one service.
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart surface-api.service
+# The airplay-* API endpoints toggle the receiver services on demand.
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start airplay-video.service airplay-audio.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl stop airplay-video.service airplay-audio.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart airplay-video.service
+__USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block kiosk-restore.service

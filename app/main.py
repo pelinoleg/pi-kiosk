@@ -438,6 +438,10 @@ async def root():
             "GET /surface/audio-outputs": "Список аудио выходов",
             "GET /surface/system-volume": "Уровень громкости",
             "POST /surface/system-volume": "Установка громкости",
+            "GET /surface/airplay-state": "Состояние приёма AirPlay",
+            "GET /surface/airplay-on": "Включить приём AirPlay",
+            "GET /surface/airplay-off": "Выключить приём AirPlay",
+            "GET /surface/airplay-kick": "Сбросить зависшего AirPlay-клиента",
             # И другие эндпоинты...
         }
     }
@@ -938,6 +942,100 @@ async def reboot_system():
         run_bg(cmd)
 
     return {"message": "Запрос на перезагрузку отправлен"}
+
+
+########################
+# AirPlay
+########################
+
+AIRPLAY_VIDEO_UNIT = os.environ.get("AIRPLAY_VIDEO_UNIT", "airplay-video.service")
+AIRPLAY_AUDIO_UNIT = os.environ.get("AIRPLAY_AUDIO_UNIT", "airplay-audio.service")
+AIRPLAY_VIDEO_PORT = int(os.environ.get("AIRPLAY_VIDEO_PORT", "35000"))
+AIRPLAY_STATE_FILE = "/var/lib/kiosk/airplay_client"
+KIOSK_RESTORE_UNIT = os.environ.get("KIOSK_RESTORE_UNIT", "kiosk-restore.service")
+
+
+def _airplay_unit_state(unit: str) -> str:
+    result = run_command(f"systemctl is-active {unit}")
+    return result["stdout"].strip() or "unknown"
+
+
+def _airplay_session_clients() -> List[str]:
+    """Адреса клиентов с установленными соединениями на зеркальные порты"""
+    ports = {AIRPLAY_VIDEO_PORT, AIRPLAY_VIDEO_PORT + 1, AIRPLAY_VIDEO_PORT + 2}
+    clients = set()
+    try:
+        for conn in psutil.net_connections(kind="tcp"):
+            if (conn.status == psutil.CONN_ESTABLISHED and conn.laddr
+                    and conn.laddr.port in ports and conn.raddr):
+                clients.add(conn.raddr.ip)
+    except Exception as e:
+        logger.error(f"Не удалось перечислить AirPlay-соединения: {e}")
+    return sorted(clients)
+
+
+def _airplay_restore_kiosk():
+    """Сбросить флаг сессии и вернуть на экран то, что было до AirPlay"""
+    try:
+        with open(AIRPLAY_STATE_FILE, "w") as f:
+            f.write("0\n")
+    except OSError:
+        pass
+    # Через systemd, а не напрямую: restore, запущенный от пользователя API,
+    # погибает от pkill -f chrome в обработчике chrome-tabs — его собственный
+    # curl содержит «chrome-tabs» в командной строке. Юнит работает от root,
+    # до него этот pkill не дотягивается, а параллельные запуски systemd
+    # сериализует сам.
+    run_command(f"sudo systemctl restart --no-block {KIOSK_RESTORE_UNIT}")
+
+
+@app.get("/surface/airplay-state")
+async def airplay_state():
+    """Состояние приёма AirPlay: сервисы и активная сессия"""
+    clients = _airplay_session_clients()
+    return {
+        "video": _airplay_unit_state(AIRPLAY_VIDEO_UNIT),
+        "audio": _airplay_unit_state(AIRPLAY_AUDIO_UNIT),
+        "session_active": bool(clients),
+        "clients": clients,
+    }
+
+
+@app.get("/surface/airplay-on")
+async def airplay_on():
+    """Включение приёма AirPlay"""
+    result = run_command(f"sudo systemctl start {AIRPLAY_VIDEO_UNIT} {AIRPLAY_AUDIO_UNIT}")
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=f"Не удалось запустить AirPlay: {result['stderr']}")
+    return {
+        "message": "AirPlay включён",
+        "video": _airplay_unit_state(AIRPLAY_VIDEO_UNIT),
+        "audio": _airplay_unit_state(AIRPLAY_AUDIO_UNIT),
+    }
+
+
+@app.get("/surface/airplay-off")
+async def airplay_off():
+    """Выключение приёма AirPlay; экран возвращается к киоску"""
+    had_session = bool(_airplay_session_clients())
+    result = run_command(f"sudo systemctl stop {AIRPLAY_VIDEO_UNIT} {AIRPLAY_AUDIO_UNIT}")
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=f"Не удалось остановить AirPlay: {result['stderr']}")
+    # Сторожевой таймер не работает при выключенном сервисе, так что вернуть
+    # киоск на экран нужно отсюда — иначе после сессии он останется чёрным.
+    _airplay_restore_kiosk()
+    return {"message": "AirPlay выключен", "interrupted_session": had_session}
+
+
+@app.get("/surface/airplay-kick")
+async def airplay_kick():
+    """Сброс зависшего клиента: перезапуск видеоприёмника AirPlay"""
+    clients = _airplay_session_clients()
+    result = run_command(f"sudo systemctl restart {AIRPLAY_VIDEO_UNIT}")
+    if not result["success"]:
+        raise HTTPException(status_code=500, detail=f"Не удалось перезапустить AirPlay: {result['stderr']}")
+    _airplay_restore_kiosk()
+    return {"message": "AirPlay-приёмник перезапущен", "dropped_clients": clients}
 
 
 @app.post("/surface/custom-command")
