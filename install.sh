@@ -119,16 +119,43 @@ if [ -f /etc/kiosk/kiosk.env ]; then
 else
     info "writing /etc/kiosk/kiosk.env"
     GW=$(ip route show default 2>/dev/null | awk '/^default/{print $3; exit}')
+
+    # Only nurse a wireless interface if we are actually on one. Defaulting to
+    # wlan0 on a wired box would have the watchdog bouncing a down interface as
+    # its first recovery step, which is noise at best.
+    if [ -n "${WIFI_IFACE+set}" ]; then
+        IFACE="$WIFI_IFACE"
+    else
+        DEV=$(ip route show default 2>/dev/null | awk '/^default/{print $5; exit}')
+        case "$DEV" in
+            wl*) IFACE="$DEV" ;;
+            *)   IFACE="" ;;
+        esac
+    fi
+
     sudo cp "$SRC/config/kiosk.env.example" /etc/kiosk/kiosk.env
     sudo sed -i "s|^API_PORT=.*|API_PORT=${API_PORT}|" /etc/kiosk/kiosk.env
     sudo sed -i "s|^COMBO_URL=.*|COMBO_URL=${COMBO_URL:-}|" /etc/kiosk/kiosk.env
-    sudo sed -i "s|^WIFI_IFACE=.*|WIFI_IFACE=${WIFI_IFACE-wlan0}|" /etc/kiosk/kiosk.env
+    sudo sed -i "s|^WIFI_IFACE=.*|WIFI_IFACE=${IFACE}|" /etc/kiosk/kiosk.env
     sudo sed -i "s|^PROBE_HOSTS=.*|PROBE_HOSTS=\"${PROBE_HOSTS:-$GW}\"|" /etc/kiosk/kiosk.env
 fi
 
 info "installing the X session"
 sudo -u "$KIOSK_USER" cp "$SRC/config/xinitrc" "$KIOSK_HOME/.xinitrc"
 sudo chmod +x "$KIOSK_HOME/.xinitrc"
+
+# Xorg.wrap ships with allowed_users=console, which means a user without a
+# console session may not start X. A systemd service has no controlling TTY, so
+# startx dies with "Only console users are allowed to run the X server" and the
+# unit sits in an auto-restart loop forever. Widen it.
+info "allowing X to start from a service (Xwrapper)"
+sudo mkdir -p /etc/X11
+sudo tee /etc/X11/Xwrapper.config >/dev/null <<'EOF'
+# Managed by pi-kiosk: the kiosk starts X from systemd, which has no console
+# session, so the stock allowed_users=console would refuse to run the server.
+allowed_users=anybody
+needs_root_rights=yes
+EOF
 
 # ------------------------------------------------------------------- systemd --
 info "installing systemd units"

@@ -190,6 +190,13 @@ logread | grep "disassociated" | grep -oE "STA [0-9a-f:]+" | sort | uniq -c | so
 `excessive missing ACKs` — радиомодуль клиента перестал отвечать (питание,
 драйвер, power save), а не слабый сигнал.
 
+**`Only console users are allowed to run the X server`.** Пакет
+`xserver-xorg-legacy` ставит в `/etc/X11/Xwrapper.config` значение
+`allowed_users=console`, а у systemd-сервиса консольной сессии нет — `startx`
+падает, и юнит вечно висит в `activating (auto-restart)`. Установщик прописывает
+туда `allowed_users=anybody`. Симптом легко принять за проблему с драйвером или
+монитором, хотя дело только в этой строке.
+
 **Power save.** У brcmfmac на Pi он вызывает залипания. Установщик выключает
 его через `/etc/NetworkManager/conf.d/10-no-powersave.conf`.
 

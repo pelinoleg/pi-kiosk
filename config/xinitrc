@@ -5,9 +5,10 @@ xset -dpms
 xset s off
 xset s noblank
 
-# Force HDMI on in case X started before the monitor was attached. The output
-# name differs across Pi models and drivers, so try each one.
-for out in HDMI-1 HDMI-2 HDMI-A-1 HDMI-A-2; do
+# Force the panel on in case X started before the monitor was attached. Output
+# names differ across Pi models, drivers and panel types - DSI mini screens are
+# not called HDMI-anything - so try each one and stop at the first that exists.
+for out in HDMI-1 HDMI-2 HDMI-A-1 HDMI-A-2 DSI-1 DSI-2 DSI-A-1; do
     xrandr --output "$out" --auto 2>/dev/null && break
 done
 
