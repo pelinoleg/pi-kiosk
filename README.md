@@ -81,6 +81,9 @@ curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh 
 | `PROBE_HOSTS` | шлюз | хосты, доказывающие живость сети |
 | `AUTOLOGIN` | `0` | `1` — включить автологин в консоль |
 | `HW_WATCHDOG` | `0` | `1` — включить аппаратный watchdog (см. грабли) |
+| `AIRPLAY` | `1` | `0` — не ставить AirPlay-приёмники |
+| `AIRPLAY_NAME` | имя хоста | как устройство называется в списке AirPlay на iOS |
+| `AIRPLAY_VIDEO_PORT` | `35000` | порт uxplay (его собственный дефолт 7000 занят API) |
 | `GITHUB_TOKEN` | — | нужен только для приватного репозитория |
 
 Поменять потом можно в `/etc/kiosk/kiosk.env`, затем
@@ -96,6 +99,8 @@ curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh 
 | `surface-api.service` | управляющее API на порту 7000 |
 | `net-watchdog.timer` | проверяет сеть раз в минуту |
 | `kiosk-restore.service` | после загрузки возвращает картинку на экран |
+| `airplay-video.service` | приём AirPlay с iOS: повтор экрана, видео и звук (uxplay) |
+| `airplay-audio.service` | AirPlay-колонка, только звук (shairport-sync) |
 
 Пакеты: `xserver-xorg`, `xinit`, `openbox`, `unclutter`, `chromium`, `mpv`,
 `ffmpeg`, `mpg123`, `pulseaudio`, `alsa-utils`, `network-manager`, `python3-venv`.
@@ -129,6 +134,29 @@ curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh 
 Живость определяется по локальной сети, а не по интернету: сначала пингуется
 шлюз, потом `PROBE_HOSTS`. Так киоск не уйдёт в перезагрузку из-за того, что у
 провайдера что-то упало.
+
+### AirPlay с iPhone и iPad
+
+Ставится по умолчанию. На устройстве появляются две цели:
+
+| В списке AirPlay на iOS | Что делает |
+|---|---|
+| `<имя>` | повтор экрана и видео со звуком |
+| `<имя> Audio` | только звук, как колонка |
+
+Оба приёмника работают **от имени пользователя киоска**, а не системными
+демонами — иначе они не видят его PulseAudio, через который играет всё
+остальное. Штатный юнит `shairport-sync` из пакета установщик отключает: он
+запускается под своим пользователем в ALSA и забирает звуковое устройство.
+
+Порт uxplay принудительно выставлен в `35000`. Его собственный дефолт — **7000**,
+ровно тот, что занимает управляющее API; при столкновении один из двух молча не
+поднялся бы.
+
+Открываемые порты (автоматически, если активен ufw): `5353/udp` (обнаружение),
+`35000–35002` tcp+udp, `5000/tcp` и `6001–6011/udp`, `7000/udp`.
+
+Отключить: `AIRPLAY=0` при установке.
 
 ### Восстановление экрана
 
@@ -215,6 +243,16 @@ logread | grep "disassociated" | grep -oE "STA [0-9a-f:]+" | sort | uniq -c | so
 cut -d" " -f1 /proc/uptime     # растёт монотонно или обнуляется?
 sudo cat /var/lib/kiosk/fail_count
 systemctl show -p RuntimeWatchdogUSec
+```
+
+**`ufw` не находится через `command -v`.** Он лежит в `/usr/sbin`, которого нет
+в `PATH` обычного пользователя — проверка наличия firewall проваливалась именно
+на тех машинах, где firewall есть. Симптом: API отвечает на `127.0.0.1`, но не
+отвечает из сети, и выглядит это как сломанный сервис. Проверять так:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://<ip>:7000/   # снаружи
+sudo /usr/sbin/ufw status
 ```
 
 **Power save.** У brcmfmac на Pi он вызывает залипания. Установщик выключает
