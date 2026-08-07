@@ -1058,10 +1058,8 @@ async def bt_scan(seconds: int = Query(12, ge=3, le=30)):
     return {"devices": _bt_device_list(), "scanned_seconds": seconds}
 
 
-@app.get("/surface/bt-connect/{mac}")
-async def bt_connect(mac: str):
-    """Подключить Bluetooth-колонку и сразу перевести звук на неё"""
-    _bt_check_mac(mac)
+def _bt_connect_core(mac: str):
+    """Сопрячь и подключить устройство, вернуть имя его аудиовыхода (или None)"""
     run_command("rfkill unblock bluetooth; bluetoothctl power on")
     # pair может ответить AlreadyExists — это не ошибка
     run_command(f"timeout 25 bluetoothctl pair {mac}")
@@ -1070,18 +1068,22 @@ async def bt_connect(mac: str):
     if "Connection successful" not in result["stdout"] and "already connected" not in result["stdout"].lower():
         raise HTTPException(status_code=502,
                             detail=f"Не подключилась: {result['stdout'].strip()[-200:] or result['stderr'].strip()[-200:]}")
-    # Ждём, пока PulseAudio создаст sink, и делаем его выходом по умолчанию.
+    # Ждём, пока PulseAudio создаст sink.
     sink_tag = mac.replace(":", "_")
-    sink_name = None
     for _ in range(10):
         time.sleep(1)
         sinks = run_command("pactl list short sinks")["stdout"]
         for line in sinks.splitlines():
             if sink_tag in line:
-                sink_name = line.split("\t")[1]
-                break
-        if sink_name:
-            break
+                return line.split("\t")[1]
+    return None
+
+
+@app.get("/surface/bt-connect/{mac}")
+async def bt_connect(mac: str):
+    """Подключить Bluetooth-колонку и сразу перевести звук на неё"""
+    _bt_check_mac(mac)
+    sink_name = _bt_connect_core(mac)
     if sink_name:
         try:
             set_default_sink(sink_name)
@@ -1090,6 +1092,62 @@ async def bt_connect(mac: str):
     return {"message": "Колонка подключена" + (", звук идёт на неё" if sink_name else
                        ", но аудиовыход не появился — проверь, что это колонка"),
             "mac": mac, "sink": sink_name}
+
+
+def _sink_names():
+    out = run_command("pactl list short sinks")["stdout"]
+    return [line.split("\t")[1] for line in out.splitlines() if "\t" in line]
+
+
+def resolve_sink_target(target: str) -> str:
+    """Короткая цель (bt | usb | hdmi | jack) или точное имя → имя sink.
+
+    Для bt: если колонки нет среди выходов, но есть знакомая — подключаем её.
+    """
+    t = (target or "").lower()
+    names = _sink_names()
+
+    def find(predicate):
+        return next((n for n in names if predicate(n.lower())), None)
+
+    if t in ("bt", "bluetooth"):
+        sink = find(lambda n: n.startswith("bluez"))
+        if sink:
+            return sink
+        for device in _bt_device_list():
+            if device["paired"] and device["audio"]:
+                sink = _bt_connect_core(device["mac"])
+                if sink:
+                    return sink
+        raise HTTPException(status_code=502,
+                            detail="Bluetooth-колонка не подключена, и знакомой колонки не нашлось")
+    if t == "usb":
+        sink = find(lambda n: "usb" in n)
+    elif t == "hdmi":
+        sink = find(lambda n: "hdmi" in n)
+    elif t in ("jack", "analog"):
+        sink = find(lambda n: ("mailbox" in n or "headphones" in n) and "usb" not in n)
+    else:
+        sink = target if target in names else None
+    if not sink:
+        raise HTTPException(status_code=404,
+                            detail=f"Выход '{target}' не найден. Есть: {', '.join(names)} и цели bt/usb/hdmi/jack")
+    return sink
+
+
+@app.get("/surface/audio-to/{target}")
+async def audio_to(target: str):
+    """Перевести звук на выход по короткому имени: bt, usb, hdmi, jack.
+
+    Для автоматизаций: curl .../surface/audio-to/bt — и всё дальнейшее играет
+    в Bluetooth-колонку (спящую знакомую колонку разбудит и подключит).
+    """
+    sink = resolve_sink_target(target)
+    try:
+        set_default_sink(sink)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось переключить: {e}")
+    return {"message": f"Звук идёт на {sink}", "target": target, "sink": sink}
 
 
 @app.get("/surface/bt-disconnect/{mac}")
@@ -1769,21 +1827,41 @@ def espeak_synth(text: str, lang: str, slow: bool):
     return path, False
 
 
+def _sink_volume(sink: str):
+    out = run_command(f"pactl get-sink-volume {shlex.quote(sink)}")["stdout"]
+    match = re.search(r"(\d+)%", out)
+    return int(match.group(1)) if match else None
+
+
 def play_announcement(path: str, volume: int, notification: bool,
-                      notification_volume: int, pause: float, keep: bool = True):
-    """Сигнал → пауза → речь, всё в фоне; громкость возвращается после."""
-    prev = get_current_volume()
+                      notification_volume: int, pause: float,
+                      keep: bool = True, sink: str = None):
+    """Сигнал → пауза → речь, всё в фоне; громкость возвращается после.
+
+    Если задан sink — объявление идёт именно на этот выход, не меняя выход
+    по умолчанию (киоск продолжает играть куда играл).
+    """
+    if sink:
+        prev = _sink_volume(sink)
+        set_volume = lambda v: f"pactl set-sink-volume {shlex.quote(sink)} {v}%"
+        mp3_player = f"mpg123 -q -o pulse -a {shlex.quote(sink)}"
+        wav_player = f"paplay --device={shlex.quote(sink)}"
+    else:
+        prev = get_current_volume()
+        set_volume = lambda v: f"amixer -D pulse sset Master {v}% >/dev/null"
+        mp3_player = "mpg123 -q"
+        wav_player = "paplay"
     steps = []
     if notification and os.path.exists(NOTIFICATION_FILE):
-        steps.append(f"amixer -D pulse sset Master {notification_volume}% >/dev/null")
-        steps.append(f"mpg123 -q {NOTIFICATION_FILE}")
+        steps.append(set_volume(notification_volume))
+        steps.append(f"{mp3_player} {NOTIFICATION_FILE}")
         if pause > 0:
             steps.append(f"sleep {pause}")
-    steps.append(f"amixer -D pulse sset Master {volume}% >/dev/null")
-    player = "mpg123 -q" if path.endswith(".mp3") else "paplay"
+    steps.append(set_volume(volume))
+    player = mp3_player if path.endswith(".mp3") else wav_player
     steps.append(f"{player} {shlex.quote(path)}")
     if prev is not None:
-        steps.append(f"amixer -D pulse sset Master {prev}% >/dev/null")
+        steps.append(set_volume(prev))
     if not keep:
         steps.append(f"rm -f {shlex.quote(path)}")
     spawn("; ".join(steps))
@@ -1800,6 +1878,8 @@ async def tts_say(
         notification: bool = Query(None, description="Сигнал перед речью, иначе из настроек"),
         speed: float = Query(None, ge=0.25, le=4.0, description="Скорость речи, иначе из настроек"),
         slow: bool = Query(False, description="Медленная речь (gtts/espeak)"),
+        output: str = Query(None, description="Куда играть: bt, usb, hdmi, jack или имя выхода. "
+                                              "Только это объявление; выход по умолчанию не меняется"),
 ):
     """Произнести текст на киоске.
 
@@ -1808,6 +1888,7 @@ async def tts_say(
     Синтез кешируется — повторные фразы играют мгновенно и бесплатно.
     """
     ensure_not_quiet()
+    sink = resolve_sink_target(output) if output else None
     settings = load_tts_settings()
     volume = settings["volume"] if volume is None else volume
     notification = settings["notification_enabled"] if notification is None else notification
@@ -1839,10 +1920,10 @@ async def tts_say(
                 raise HTTPException(status_code=400, detail=f"Неизвестный движок: {eng}")
             prev = play_announcement(path, volume, notification,
                                      settings["notification_volume"],
-                                     settings["pause_duration"], keep)
+                                     settings["pause_duration"], keep, sink=sink)
             return {"message": "Произношу", "engine": eng, "cached": cached,
                     "text": text, "lang": lang, "volume": volume,
-                    "restored_volume": prev}
+                    "output": sink, "restored_volume": prev}
         except HTTPException:
             raise
         except Exception as e:
@@ -2248,7 +2329,8 @@ async def play_media(
         fullscreen: bool = Query(True, description="Полноэкранный режим"),
         quality: int = Query(720, ge=144, le=2160,
                              description="Потолок высоты видео для YouTube. 720 — максимум, который "
-                                         "Pi 4 декодит без рывков (софтом; 1080p — ~40 дропов/с)")
+                                         "Pi 4 декодит без рывков (софтом; 1080p — ~40 дропов/с)"),
+        output: str = Query(None, description="Куда играть звук: bt, usb, hdmi, jack или имя выхода")
 ):
     """
     Универсальный эндпоинт для воспроизведения медиа через MPV.
@@ -2259,6 +2341,7 @@ async def play_media(
     - Другие URL: прямой запуск через MPV
     """
     ensure_not_quiet()
+    sink = resolve_sink_target(output) if output else None
     # Завершаем все текущие процессы воспроизведения
     kill_chrome_processes()
     kill_mpv_processes()
@@ -2281,6 +2364,7 @@ async def play_media(
         # сборке тоже давится (~43 дропа/с на 720p).
         "--vo=xv",
         "--hwdec=auto-safe",
+        *( [f"--audio-device=pulse/{sink}"] if sink else [] ),
         # Без потолка yt-dlp берёт максимум (VP9/AV1 1080p+), и Pi декодит его
         # софтом с диким тормозом. h264 до 720p Pi умеет аппаратно, а панель
         # всё равно 800x480 — разницы в картинке нет, разница только в FPS.
