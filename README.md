@@ -290,7 +290,11 @@ curl "http://<ip>:7000/surface/chrome-tabs?urls=http://a/&urls=http://b/&times=6
 | `GET /surface/system-volume-up` / `-down` | ±5% |
 | `GET /surface/toggle-mute` | вкл/выкл звук |
 | `GET /surface/audio-outputs` | список аудиовыходов |
-| `GET /surface/set-audio-output/{sink}` | переключить аудиовыход |
+| `GET /surface/set-audio-output/{sink}` | переключить аудиовыход (запоминается, переживает перезагрузку и втыкание HDMI) |
+| `GET /surface/bt-scan?seconds=12` | поиск Bluetooth-колонок (колонку — в режим сопряжения); безымянный BLE-шум отфильтрован |
+| `GET /surface/bt-devices` | известные BT-устройства и их состояние |
+| `GET /surface/bt-connect/{mac}` | подключить колонку и сразу перевести звук на неё |
+| `GET /surface/bt-disconnect/{mac}` / `bt-forget/{mac}` | отключить / забыть |
 | `GET /surface/tts-say?text=...&lang=ro` | **произнести текст**. Цепочка: Google Cloud TTS (голоса Wavenet/Chirp3-HD, ключ в `kiosk.env`) → gTTS → espeak-ng (офлайн). Параметры: `engine`, `voice`, `volume`, `notification`, `slow`. Озвучки кешируются — повторы мгновенны и бесплатны |
 | `GET /surface/tts-voices` | доступные голоса по языкам + текущие настройки |
 | `POST /surface/tts-settings` | настройки TTS: голос на язык, скорость, тон, громкости, сигнал |

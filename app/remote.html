@@ -23,6 +23,17 @@
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     max-width: 480px; margin-inline: auto;
   }
+  /* На широком экране одна колонка превращается в бесконечную ленту —
+     раскладываем карточки в 2-3 колонки, на телефоне всё как было. */
+  @media (min-width: 760px) {
+    body { max-width: 1020px; }
+    #cards { columns: 2; column-gap: 14px; }
+    #cards > .card { break-inside: avoid; }
+  }
+  @media (min-width: 1200px) {
+    body { max-width: 1540px; }
+    #cards { columns: 3; }
+  }
   h1 { font-size: 20px; margin: 4px 0 16px; }
   h1 small { color: var(--dim); font-weight: normal; font-size: 13px; }
   .card {
@@ -130,6 +141,8 @@
 <body>
 <h1>Киоск <small id="host"></small></h1>
 
+<div id="cards">
+
 <div class="card">
   <h2>Состояние <span id="quiet-badge"></span></h2>
   <dl class="status-grid" id="status">
@@ -202,6 +215,16 @@
     <button class="third" onclick="call('/surface/system-volume-down', 'Тише')">−5%</button>
     <button class="third" onclick="call('/surface/toggle-mute', 'Звук переключён')">Mute</button>
     <button class="third" onclick="call('/surface/system-volume-up', 'Громче')">+5%</button>
+  </div>
+  <div style="margin-top:12px">
+    <h2 style="margin-bottom:4px">Bluetooth-колонки</h2>
+    <div id="bt-list" class="muted">…</div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="btScan()" id="bt-scan-btn">Искать колонки (12с)</button>
+    </div>
+    <div class="muted" style="margin-top:4px">
+      Перед поиском переведи колонку в режим сопряжения.
+    </div>
   </div>
 </div>
 
@@ -317,6 +340,8 @@
   <a href="/surface/screenshot" target="_blank">Скриншот экрана (PNG)</a>
   <a href="/surface/quiet-state" target="_blank">Режим тишины — текущий конфиг</a>
 </div>
+
+</div><!-- /cards -->
 
 <div id="toast"></div>
 
@@ -434,6 +459,57 @@
   async function pickSink(name) {
     await call('/surface/set-audio-output/' + encodeURIComponent(name),
                'Звук идёт на: ' + name.split('.').pop());
+    loadSinks();
+  }
+
+  function renderBt(devices) {
+    const el = document.getElementById('bt-list');
+    if (!devices.length) { el.innerHTML = 'Устройств нет — нажми «Искать»'; return; }
+    el.innerHTML = devices.map(d => `
+      <div class="preset">
+        <span>${d.name}</span>
+        ${d.audio ? pill('аудио', 'ok') : ''}
+        ${d.connected ? pill('подключена', 'ok') : (d.paired ? pill('знакома', 'warn') : '')}
+        ${d.connected
+          ? `<button style="flex:none;min-height:34px;font-size:13px;padding:0 10px" onclick="btDo('bt-disconnect','${d.mac}','Отключаю…')">Отключить</button>`
+          : `<button style="flex:none;min-height:34px;font-size:13px;padding:0 10px" class="primary" onclick="btDo('bt-connect','${d.mac}','Подключаю…')">Подключить</button>`}
+        <b onclick="btDo('bt-forget','${d.mac}','Забываю…')">×</b>
+      </div>`).join('');
+  }
+
+  async function loadBt() {
+    try {
+      const data = await (await fetch('/surface/bt-devices')).json();
+      renderBt(data.devices);
+    } catch (e) {
+      document.getElementById('bt-list').textContent = 'Bluetooth недоступен';
+    }
+  }
+
+  async function btScan() {
+    const btn = document.getElementById('bt-scan-btn');
+    btn.disabled = true; btn.textContent = 'Ищу…';
+    try {
+      const data = await (await fetch('/surface/bt-scan?seconds=12')).json();
+      renderBt(data.devices);
+      toast('Поиск закончен');
+    } catch (e) {
+      toast('Ошибка поиска: ' + e.message, true);
+    }
+    btn.disabled = false; btn.textContent = 'Искать колонки (12с)';
+  }
+
+  async function btDo(action, mac, msg) {
+    toast(msg);
+    try {
+      const r = await fetch('/surface/' + action + '/' + mac);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || r.status);
+      toast(data.message || 'Готово');
+    } catch (e) {
+      toast('Ошибка: ' + e.message, true);
+    }
+    loadBt();
     loadSinks();
   }
 
@@ -709,6 +785,7 @@
   loadSinks();
   loadOutputs();
   loadTts();
+  loadBt();
   renderPresets();
   setInterval(refreshStatus, 30000);
 </script>

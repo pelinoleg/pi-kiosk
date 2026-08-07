@@ -86,10 +86,14 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     chromium \
     python3 python3-venv python3-pip python3-pyqt5 python3-dev \
     mpv ffmpeg mpg123 pulseaudio alsa-utils espeak-ng \
+    pulseaudio-module-bluetooth \
     network-manager curl wget git socat scrot \
     >/dev/null || die "Package installation failed."
 # python3-pyqt5: часы (clock.py) рисуются системным python — PyQt5 не в venv.
 # scrot: эндпоинт /surface/screenshot. espeak-ng: офлайн-фоллбек tts-say.
+# pulseaudio-module-bluetooth: Bluetooth-колонки (bt-* эндпоинты).
+sudo systemctl enable --now bluetooth >/dev/null 2>&1 || true
+sudo rfkill unblock bluetooth 2>/dev/null || true
 
 # Raspberry Pi OS ships chromium; plain Debian calls it chromium-browser. Make
 # sure at least one of them exists, and that /usr/bin/chromium resolves.

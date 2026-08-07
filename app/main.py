@@ -973,12 +973,11 @@ async def system_volume_down():
 AUDIO_SINK_FILE = "/var/lib/kiosk/audio_sink"
 
 
-@app.get("/surface/set-audio-output/{sink_id}")
-async def set_audio_output(sink_id: str):
-    """Переключение аудио выхода; выбор запоминается и переживает перезагрузку"""
+def set_default_sink(sink_id: str):
+    """Сделать выход дефолтным, перегнать играющие потоки, запомнить выбор"""
     result = run_command(f"pactl set-default-sink {shlex.quote(sink_id)}")
     if not result["success"]:
-        raise HTTPException(status_code=500, detail=f"Ошибка изменения аудио выхода: {result['stderr']}")
+        raise RuntimeError(result["stderr"].strip() or "pactl set-default-sink failed")
     # Уже играющие потоки сами не переезжают — перегнать их на новый выход.
     run_command(
         "pactl list short sink-inputs | cut -f1 | "
@@ -991,7 +990,122 @@ async def set_audio_output(sink_id: str):
             f.write(sink_id + "\n")
     except OSError as e:
         logger.warning(f"Не удалось запомнить аудиовыход: {e}")
+
+
+@app.get("/surface/set-audio-output/{sink_id}")
+async def set_audio_output(sink_id: str):
+    """Переключение аудио выхода; выбор запоминается и переживает перезагрузку"""
+    try:
+        set_default_sink(sink_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка изменения аудио выхода: {e}")
     return {"sink_id": sink_id, "message": f"Аудио выход изменен на {sink_id}"}
+
+
+########################
+# Bluetooth-колонки
+########################
+
+_BT_MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+
+def _bt_check_mac(mac: str):
+    if not _BT_MAC_RE.fullmatch(mac):
+        raise HTTPException(status_code=400, detail=f"Это не MAC-адрес: {mac}")
+
+
+def _bt_device_list():
+    devices = []
+    listing = run_command("bluetoothctl devices")
+    for line in listing["stdout"].splitlines():
+        parts = line.split(" ", 2)
+        if len(parts) < 3 or parts[0] != "Device":
+            continue
+        mac, name = parts[1], parts[2]
+        # Безымянные устройства показываются как их же MAC с дефисами — это
+        # эфирный шум (телефоны со случайными адресами), в списке ему не место.
+        if name.replace("-", ":").upper() == mac.upper():
+            continue
+        info = run_command(f"bluetoothctl info {mac}")["stdout"]
+        devices.append({
+            "mac": mac,
+            "name": name,
+            "paired": "Paired: yes" in info,
+            "connected": "Connected: yes" in info,
+            # у колонок и наушников иконка audio-*
+            "audio": "Icon: audio" in info,
+        })
+    # Колонки и знакомые устройства — наверх
+    devices.sort(key=lambda d: (not d["connected"], not d["audio"], not d["paired"], d["name"].lower()))
+    return devices
+
+
+@app.get("/surface/bt-devices")
+async def bt_devices():
+    """Известные Bluetooth-устройства и их состояние"""
+    return {"devices": _bt_device_list()}
+
+
+@app.get("/surface/bt-scan")
+async def bt_scan(seconds: int = Query(12, ge=3, le=30)):
+    """Поиск Bluetooth-устройств рядом (блокирует на время поиска).
+
+    Колонку перед поиском перевести в режим сопряжения.
+    """
+    # Контроллер может быть выключен (свежая загрузка, rfkill) — включаем сами.
+    run_command("rfkill unblock bluetooth; bluetoothctl power on")
+    run_command(f"timeout {seconds + 2} bluetoothctl --timeout {seconds} scan on")
+    return {"devices": _bt_device_list(), "scanned_seconds": seconds}
+
+
+@app.get("/surface/bt-connect/{mac}")
+async def bt_connect(mac: str):
+    """Подключить Bluetooth-колонку и сразу перевести звук на неё"""
+    _bt_check_mac(mac)
+    run_command("rfkill unblock bluetooth; bluetoothctl power on")
+    # pair может ответить AlreadyExists — это не ошибка
+    run_command(f"timeout 25 bluetoothctl pair {mac}")
+    run_command(f"bluetoothctl trust {mac}")
+    result = run_command(f"timeout 20 bluetoothctl connect {mac}")
+    if "Connection successful" not in result["stdout"] and "already connected" not in result["stdout"].lower():
+        raise HTTPException(status_code=502,
+                            detail=f"Не подключилась: {result['stdout'].strip()[-200:] or result['stderr'].strip()[-200:]}")
+    # Ждём, пока PulseAudio создаст sink, и делаем его выходом по умолчанию.
+    sink_tag = mac.replace(":", "_")
+    sink_name = None
+    for _ in range(10):
+        time.sleep(1)
+        sinks = run_command("pactl list short sinks")["stdout"]
+        for line in sinks.splitlines():
+            if sink_tag in line:
+                sink_name = line.split("\t")[1]
+                break
+        if sink_name:
+            break
+    if sink_name:
+        try:
+            set_default_sink(sink_name)
+        except RuntimeError as e:
+            logger.warning(f"Колонка подключена, но не стала дефолтом: {e}")
+    return {"message": "Колонка подключена" + (", звук идёт на неё" if sink_name else
+                       ", но аудиовыход не появился — проверь, что это колонка"),
+            "mac": mac, "sink": sink_name}
+
+
+@app.get("/surface/bt-disconnect/{mac}")
+async def bt_disconnect(mac: str):
+    """Отключить Bluetooth-устройство (остаётся сопряжённым)"""
+    _bt_check_mac(mac)
+    run_command(f"timeout 15 bluetoothctl disconnect {mac}")
+    return {"message": "Отключено", "mac": mac}
+
+
+@app.get("/surface/bt-forget/{mac}")
+async def bt_forget(mac: str):
+    """Забыть Bluetooth-устройство совсем"""
+    _bt_check_mac(mac)
+    run_command(f"bluetoothctl remove {mac}")
+    return {"message": "Устройство забыто", "mac": mac}
 
 
 @app.get("/surface/toggle-mute")
