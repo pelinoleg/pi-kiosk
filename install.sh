@@ -99,6 +99,11 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 sudo apt-get install -y -qq chromium >/dev/null 2>&1 \
     || sudo apt-get install -y -qq chromium-browser >/dev/null 2>&1 \
     || warn "chromium not installed from apt"
+# yt-dlp с 2026 требует JS-runtime для полного списка YouTube-форматов; без
+# него видео молча деградирует до огрызков ("шакальное качество") или совсем
+# отказывает. node — самый доступный runtime на Pi.
+sudo apt-get install -y -qq nodejs >/dev/null 2>&1 || warn "nodejs (yt-dlp JS runtime) not installed"
+printf -- "--js-runtimes node\n" | sudo tee /etc/yt-dlp.conf >/dev/null
 sudo systemctl enable --now bluetooth >/dev/null 2>&1 || true
 sudo rfkill unblock bluetooth 2>/dev/null || true
 
