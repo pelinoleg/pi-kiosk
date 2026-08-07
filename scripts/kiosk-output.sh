@@ -49,9 +49,10 @@ done
 # monitor keeps HPD asserted, so both kernel and X still call it "connected"
 # and the automatics honestly cannot know it went dark.
 override=$(cat /var/lib/kiosk/output_override 2>/dev/null)
+reason="auto"
 if [ -n "$override" ] && [ "$override" != auto ]; then
     for o in $connected; do
-        [ "$o" = "$override" ] && { want="$o"; break; }
+        [ "$o" = "$override" ] && { want="$o"; reason="manual pick"; break; }
     done
 fi
 
@@ -89,7 +90,7 @@ esac
 
 if [ "$want" != "$previous" ]; then
     echo "$want" >"$STATE"
-    log "active output is now $want"
+    log "active output is now $want ($reason)"
     # main.py resolves the output once at import, so it has to be told.
     systemctl restart surface-api.service 2>/dev/null \
         || sudo -n systemctl restart surface-api.service 2>/dev/null || true

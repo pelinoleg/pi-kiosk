@@ -363,9 +363,14 @@
       const up = h.system.uptime_seconds;
       const upStr = up >= 86400 ? Math.floor(up / 86400) + 'д ' + Math.floor(up % 86400 / 3600) + 'ч'
                   : Math.floor(up / 3600) + 'ч ' + Math.floor(up % 3600 / 60) + 'м';
+      let outNote = '';
+      try {
+        const o = await (await fetch('/surface/output-state')).json();
+        outNote = o.override && o.override !== 'auto' ? ' (выбран вручную)' : ' (авто)';
+      } catch (e) { /* пометка не критична */ }
       const rows = [
         ['Браузер', h.browser_processes > 0 ? pill('работает', 'ok') : pill('нет', 'bad')],
-        ['Экран', h.display.active_output ?? h.display.output],
+        ['Экран', (h.display.active_output ?? h.display.output) + outNote],
         ['Подсветка', backlightOn ? pill('горит', 'ok') : pill('погашена', 'warn')],
         ['AirPlay', h.airplay.session_active
             ? pill('трансляция: ' + h.airplay.clients.join(', '), 'warn')
@@ -405,6 +410,10 @@
   }
 
   async function pickOutput(name) {
+    // Экран переключается мгновенно и без пути назад с телефона в кармане —
+    // одно случайное касание выглядит как «киоск сам переехал».
+    const label = name === 'auto' ? 'автоматический выбор' : name;
+    if (!confirm('Переключить экран на ' + label + '?')) { loadOutputs(); return; }
     await call('/surface/output-set/' + encodeURIComponent(name),
                name === 'auto' ? 'Выбор экрана: авто' : 'Переключаю на ' + name);
     setTimeout(loadOutputs, 2500);
