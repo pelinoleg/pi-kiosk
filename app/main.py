@@ -1343,6 +1343,12 @@ def _remote_asset(filename: str, media_type: str):
     return FileResponse(path, media_type=media_type)
 
 
+@app.get("/surface/tts")
+async def tts_ui():
+    """Страница TTS: текст, язык, скорость, быстрые фразы"""
+    return _remote_asset("tts.html", "text/html")
+
+
 @app.get("/surface/remote-manifest.json")
 async def remote_manifest():
     """PWA-манифест пульта"""
@@ -1395,8 +1401,9 @@ async def custom_command_get(command: str = Query(...)):
 async def tts_say(
         text: str = Query(..., min_length=1, max_length=500, description="Текст для озвучки"),
         volume: int = Query(90, ge=0, le=150, description="Громкость воспроизведения"),
-        lang: str = Query("ru", description="Язык (ru, en, es, ...)"),
+        lang: str = Query("ro", description="Язык (ro, ru, en, es, ...)"),
         notification: bool = Query(True, description="Сигнал перед речью"),
+        slow: bool = Query(False, description="Медленная, разборчивая речь"),
 ):
     """Произнести напечатанный текст на киоске.
 
@@ -1416,12 +1423,13 @@ async def tts_say(
     engine = None
     try:
         from gtts import gTTS
-        gTTS(text=text, lang=lang).save(audio_path)
+        gTTS(text=text, lang=lang, slow=slow).save(audio_path)
         engine = "gtts"
     except Exception as e:
         logger.warning(f"gTTS не сработал ({e}), пробую espeak-ng")
         audio_path = f"/tmp/tts_say_{stamp}.wav"
-        result = run_command(f"espeak-ng -v {lang} -s 145 -w {audio_path} {shlex.quote(text)}")
+        speed = 110 if slow else 145
+        result = run_command(f"espeak-ng -v {lang} -s {speed} -w {audio_path} {shlex.quote(text)}")
         if not result["success"]:
             raise HTTPException(status_code=500,
                                 detail=f"Ни gTTS, ни espeak-ng не сработали: {result['stderr'].strip()}")

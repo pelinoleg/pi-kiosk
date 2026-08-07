@@ -113,7 +113,7 @@ SRC_APP=$(cd "$SRC/app" && pwd)
 DST_APP=$(cd "$INSTALL_DIR" && pwd)
 if [ "$SRC_APP" != "$DST_APP" ]; then
     sudo cp "$SRC/app/main.py" "$SRC/app/clock.py" "$SRC/app/requirements.txt" \
-            "$SRC/app/remote.html" "$SRC/app/remote-manifest.json" \
+            "$SRC/app/remote.html" "$SRC/app/tts.html" "$SRC/app/remote-manifest.json" \
             "$SRC/app/remote-icon-192.png" "$SRC/app/remote-icon-512.png" "$INSTALL_DIR/"
     [ -f "$SRC/app/notification.mp3" ] && sudo cp "$SRC/app/notification.mp3" "$INSTALL_DIR/"
 else
