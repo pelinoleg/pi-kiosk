@@ -1108,6 +1108,39 @@ async def bt_forget(mac: str):
     return {"message": "Устройство забыто", "mac": mac}
 
 
+# Беспроводные колонки засыпают, если им ничего не играть. Пока дефолтный
+# выход — Bluetooth, киоск раз в несколько минут проигрывает в него полсекунды
+# цифровой тишины: для колонки это активный поток, и она не отключается.
+# В тихое окно пинги не идут — ночью колонке положено спать.
+BT_KEEPALIVE_SECONDS = int(os.environ.get("BT_KEEPALIVE_SECONDS", "240"))
+_SILENCE_WAV = "/var/lib/kiosk/silence.wav"
+
+
+def _bt_keepalive():
+    try:
+        if not os.path.exists(_SILENCE_WAV):
+            run_command(f"ffmpeg -loglevel error -f lavfi -i anullsrc=r=44100:cl=stereo "
+                        f"-t 0.5 {_SILENCE_WAV}")
+    except Exception:
+        pass
+    while True:
+        time.sleep(max(BT_KEEPALIVE_SECONDS, 60))
+        try:
+            if quiet_now():
+                continue
+            sink = run_command("pactl get-default-sink")["stdout"].strip()
+            if sink.startswith("bluez") and os.path.exists(_SILENCE_WAV):
+                run_command(f"timeout 10 paplay --device={shlex.quote(sink)} {_SILENCE_WAV}")
+        except Exception as e:
+            logger.warning(f"BT keep-alive: {e}")
+
+
+@app.on_event("startup")
+async def _start_bt_keepalive():
+    if BT_KEEPALIVE_SECONDS > 0:
+        threading.Thread(target=_bt_keepalive, daemon=True).start()
+
+
 @app.get("/surface/toggle-mute")
 async def toggle_mute():
     """Включение/выключение звука"""
