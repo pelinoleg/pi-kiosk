@@ -185,6 +185,12 @@
   <div class="row" style="margin-top:8px; align-items:center">
     <span class="muted">Громкость</span>
     <input type="number" id="play-vol" value="100" min="0" max="150" style="width:70px">
+    <span class="muted">Качество</span>
+    <select id="play-q" style="background:#0b0e12;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:7px">
+      <option value="480">480p</option>
+      <option value="720" selected>720p</option>
+      <option value="1080">1080p (рывки)</option>
+    </select>
     <label class="muted" style="display:flex;align-items:center;gap:6px">
       <input type="checkbox" id="play-loop" checked> повторять
     </label>
@@ -428,8 +434,9 @@
     if (!url) { toast('Вставь ссылку на видео', true); return; }
     const vol = document.getElementById('play-vol').value;
     const loop = document.getElementById('play-loop').checked;
-    call('/surface/play?url=' + encodeURIComponent(url) + '&volume=' + vol + '&loop=' + loop,
-         'Запускаю видео…');
+    const q = document.getElementById('play-q').value;
+    call('/surface/play?url=' + encodeURIComponent(url) + '&volume=' + vol +
+         '&loop=' + loop + '&quality=' + q, 'Запускаю видео…');
   }
 
   async function sayText() {

@@ -600,18 +600,26 @@ def _save_quiet_config(cfg: dict):
 
 
 def _darken_now():
-    """Погасить экран немедленно, пометив это тишиной"""
+    """Погасить экран и звук немедленно, пометив это тишиной.
+
+    Тишина — это не только тёмный экран: играющий MPV продолжал бы орать в
+    колонку, а вкладка браузера может зашуметь когда угодно. Поэтому плеер
+    останавливается, а системный звук глушится целиком.
+    """
     try:
         with open(DISPLAY_OFF_FLAG, "w") as f:
             f.write(_QUIET_MARK + "\n")
     except OSError:
         pass
+    run_command("pactl set-sink-mute @DEFAULT_SINK@ 1")
+    kill_mpv_processes()
     run_command(f"export DISPLAY=:0 && xrandr --output {DISPLAY_OUTPUT} --off")
 
 
 def _wake_and_restore():
-    """Включить экран немедленно и вернуть киоск"""
+    """Включить экран и звук немедленно и вернуть киоск"""
     set_display_off_flag(False)
+    run_command("pactl set-sink-mute @DEFAULT_SINK@ 0")
     run_command(f"export DISPLAY=:0 && xset s off && xset s noblank "
                 f"&& xrandr --output {DISPLAY_OUTPUT} --auto")
     _airplay_restore_kiosk()
@@ -710,29 +718,15 @@ def _quiet_enforcer():
         try:
             if quiet_now():
                 if _display_is_on():
-                    try:
-                        with open(DISPLAY_OFF_FLAG, "w") as f:
-                            f.write(_QUIET_MARK + "\n")
-                    except OSError:
-                        pass
-                    subprocess.run(
-                        f"export DISPLAY=:0 && xrandr --output {DISPLAY_OUTPUT} --off",
-                        shell=True, capture_output=True, timeout=15,
-                    )
-                    logger.info("Режим тишины: экран погашен")
+                    _darken_now()
+                    logger.info("Режим тишины: экран и звук выключены")
             else:
                 try:
                     mark = open(DISPLAY_OFF_FLAG).read().strip()
                 except OSError:
                     mark = None
                 if mark == _QUIET_MARK:
-                    set_display_off_flag(False)
-                    subprocess.run(
-                        f"export DISPLAY=:0 && xset s off && xset s noblank "
-                        f"&& xrandr --output {DISPLAY_OUTPUT} --auto",
-                        shell=True, capture_output=True, timeout=15,
-                    )
-                    _airplay_restore_kiosk()
+                    _wake_and_restore()
                     logger.info("Режим тишины закончился: экран включён, киоск восстанавливается")
         except Exception as e:
             logger.error(f"Страж режима тишины: {e}")
@@ -764,6 +758,10 @@ async def turn_display_off():
     # Флаг ставится до xrandr, чтобы сторож выходов не успел вклиниться между
     # гашением и записью флага; при неудаче — снимается.
     set_display_off_flag(True)
+    # Гаснущий экран с играющим видео — это не «выключил», а «выключил
+    # картинку, звук орёт дальше». Плеер останавливается вместе с экраном.
+    if run_command("pgrep -x mpv")["success"]:
+        kill_mpv_processes()
     cmd = f"export DISPLAY=:0 && xrandr --output {DISPLAY_OUTPUT} --off"
     result = run_command(cmd)
 
@@ -1820,9 +1818,9 @@ async def play_media(
         volume: int = Query(100, ge=0, le=150, description="Громкость воспроизведения (0-150)"),
         loop: bool = Query(True, description="Повторять воспроизведение"),
         fullscreen: bool = Query(True, description="Полноэкранный режим"),
-        quality: int = Query(480, ge=144, le=2160,
-                             description="Потолок высоты видео для YouTube. 480 — потому что Pi 4 "
-                                         "декодит софтом: 720p он уже не вытягивает без рывков")
+        quality: int = Query(720, ge=144, le=2160,
+                             description="Потолок высоты видео для YouTube. 720 — максимум, который "
+                                         "Pi 4 декодит без рывков (софтом; 1080p — ~40 дропов/с)")
 ):
     """
     Универсальный эндпоинт для воспроизведения медиа через MPV.
@@ -1849,12 +1847,11 @@ async def play_media(
     mpv_params = [
         "--force-window=yes",
         "--input-ipc-server=/tmp/mpvsocket",
-        # Именно gpu+x11egl: старый пин --vo=x11 масштабировал кадры
-        # процессором, и на 1080p-экране видео шло рывками (1800+ дропов за
-        # полминуты). Автовыбор тоже падал в x11 под systemd, так что контекст
-        # задан явно — проверено, на этой сборке он живой.
-        "--vo=gpu",
-        "--gpu-context=x11egl",
+        # Именно xv: XVideo масштабирует аппаратно, и 720p играет с
+        # единичными дропами. Оба других варианта мерялись и хуже на порядок:
+        # --vo=x11 скалирует процессором (~40 дропов/с), --vo=gpu на этой
+        # сборке тоже давится (~43 дропа/с на 720p).
+        "--vo=xv",
         "--hwdec=auto-safe",
         # Без потолка yt-dlp берёт максимум (VP9/AV1 1080p+), и Pi декодит его
         # софтом с диким тормозом. h264 до 720p Pi умеет аппаратно, а панель
