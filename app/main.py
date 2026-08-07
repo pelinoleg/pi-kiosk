@@ -16,6 +16,7 @@ import uvicorn
 import random
 import requests
 import tempfile
+import threading
 
 
 def _detect_display_output() -> str:
@@ -480,9 +481,173 @@ def set_display_off_flag(off: bool):
         logger.warning(f"Не удалось обновить {DISPLAY_OFF_FLAG}: {e}")
 
 
+########################
+# Режим тишины
+########################
+#
+# В заданные окна времени (свои для каждого дня недели) киоск глух и тёмен:
+# всё, что включает экран или издаёт звук, отвечает 409; airplay-watch
+# игнорирует сессии; фоновый страж гасит экран, если тот как-то включился,
+# и сам возвращает киоск, когда окно заканчивается. Выключить режим можно
+# только явно — конфигом (страница /surface/remote) — больше ничем.
+
+QUIET_CONFIG_FILE = "/var/lib/kiosk/quiet.json"
+QUIET_DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+_QUIET_MARK = "quiet"  # содержимое display_off-флага, когда экран погасил страж
+
+
+class QuietDay(BaseModel):
+    enabled: bool = True
+    start: str  # "HH:MM"
+    end: str    # "HH:MM"; end < start означает окно через полночь
+
+
+class QuietConfig(BaseModel):
+    enabled: bool = False
+    days: Dict[str, QuietDay] = {}
+
+
+def load_quiet_config() -> dict:
+    try:
+        with open(QUIET_CONFIG_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {"enabled": False, "days": {}}
+
+
+def _hhmm_to_minutes(value):
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", str(value or ""))
+    if not match:
+        return None
+    hours, minutes = int(match.group(1)), int(match.group(2))
+    if hours > 23 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+
+def quiet_now(cfg: dict = None) -> bool:
+    """Активно ли сейчас тихое окно"""
+    cfg = cfg if cfg is not None else load_quiet_config()
+    if not cfg.get("enabled"):
+        return False
+    now = time.localtime()
+    minutes = now.tm_hour * 60 + now.tm_min
+
+    def window(day_index):
+        day = cfg.get("days", {}).get(QUIET_DAYS[day_index])
+        if not day or not day.get("enabled", True):
+            return None
+        start, end = _hhmm_to_minutes(day.get("start")), _hhmm_to_minutes(day.get("end"))
+        if start is None or end is None or start == end:
+            return None
+        return start, end
+
+    today = window(now.tm_wday)
+    if today:
+        start, end = today
+        if start < end:
+            if start <= minutes < end:
+                return True
+        elif minutes >= start:  # окно через полночь, вечерняя половина
+            return True
+    yesterday = window((now.tm_wday - 1) % 7)
+    if yesterday:
+        start, end = yesterday
+        if start > end and minutes < end:  # утренняя половина вчерашнего окна
+            return True
+    return False
+
+
+def ensure_not_quiet():
+    """Общий страж эндпоинтов, которым в тихое окно нельзя"""
+    if quiet_now():
+        raise HTTPException(
+            status_code=409,
+            detail="Режим тишины: всё, что включает экран или звук, игнорируется. "
+                   "Отключается на странице /surface/remote",
+        )
+
+
+@app.get("/surface/quiet-state")
+async def quiet_state():
+    """Состояние режима тишины: конфиг и активно ли тихое окно сейчас"""
+    cfg = load_quiet_config()
+    return {"enabled": cfg.get("enabled", False), "quiet_now": quiet_now(cfg),
+            "days": cfg.get("days", {})}
+
+
+@app.post("/surface/quiet-config")
+async def quiet_config(cfg: QuietConfig):
+    """Сохранение конфига режима тишины"""
+    for name, day in cfg.days.items():
+        if name not in QUIET_DAYS:
+            raise HTTPException(status_code=400, detail=f"Неизвестный день: {name}")
+        if _hhmm_to_minutes(day.start) is None or _hhmm_to_minutes(day.end) is None:
+            raise HTTPException(status_code=400, detail=f"{name}: время должно быть HH:MM")
+    data = cfg.dict()
+    try:
+        with open(QUIET_CONFIG_FILE, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось сохранить конфиг: {e}")
+    logger.info(f"Режим тишины: конфиг обновлён, enabled={data['enabled']}")
+    return {"message": "Сохранено", "enabled": data["enabled"], "quiet_now": quiet_now(data),
+            "days": data["days"]}
+
+
+def _display_is_on() -> bool:
+    result = subprocess.run(
+        f"DISPLAY=:0 xrandr --query | grep '^{DISPLAY_OUTPUT}'",
+        shell=True, capture_output=True, text=True, timeout=10,
+    )
+    return bool(re.search(r"\d+x\d+\+\d+\+\d+", result.stdout))
+
+
+def _quiet_enforcer():
+    """Фоновый страж: в тихое окно держит экран тёмным, после окна
+    возвращает киоск — но только если гасил его сам (метка в флаге)."""
+    while True:
+        try:
+            if quiet_now():
+                if _display_is_on():
+                    try:
+                        with open(DISPLAY_OFF_FLAG, "w") as f:
+                            f.write(_QUIET_MARK + "\n")
+                    except OSError:
+                        pass
+                    subprocess.run(
+                        f"export DISPLAY=:0 && xrandr --output {DISPLAY_OUTPUT} --off",
+                        shell=True, capture_output=True, timeout=15,
+                    )
+                    logger.info("Режим тишины: экран погашен")
+            else:
+                try:
+                    mark = open(DISPLAY_OFF_FLAG).read().strip()
+                except OSError:
+                    mark = None
+                if mark == _QUIET_MARK:
+                    set_display_off_flag(False)
+                    subprocess.run(
+                        f"export DISPLAY=:0 && xset s off && xset s noblank "
+                        f"&& xrandr --output {DISPLAY_OUTPUT} --auto",
+                        shell=True, capture_output=True, timeout=15,
+                    )
+                    _airplay_restore_kiosk()
+                    logger.info("Режим тишины закончился: экран включён, киоск восстанавливается")
+        except Exception as e:
+            logger.error(f"Страж режима тишины: {e}")
+        time.sleep(30)
+
+
+@app.on_event("startup")
+async def _start_quiet_enforcer():
+    threading.Thread(target=_quiet_enforcer, daemon=True).start()
+
+
 @app.get("/surface/display-on")
 async def turn_display_on():
     """Включение дисплея"""
+    ensure_not_quiet()
     set_display_off_flag(False)
     cmd = f"export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output {DISPLAY_OUTPUT} --auto"
     result = run_command(cmd)
@@ -1046,6 +1211,7 @@ async def tail_logs(lines: int = Query(50, ge=1, le=1000)):
 @app.get("/surface/restore")
 async def restore_screen():
     """Вернуть на экран то, что киоск должен показывать (kiosk-restore)"""
+    ensure_not_quiet()
     _airplay_restore_kiosk()
     return {"message": "Восстановление запущено, экран вернётся через несколько секунд"}
 
@@ -1102,6 +1268,7 @@ async def play_uploaded_audio(
     с опциональным уведомлением перед воспроизведением, отдельными настройками громкости
     и задержкой между звуками
     """
+    ensure_not_quiet()
     # Проверяем тип файла (опционально)
     content_type = audio_file.content_type
     if not content_type or not content_type.startswith("audio/"):
@@ -1218,6 +1385,7 @@ async def chrome_tabs_slideshow(
     """
     Открывает URL в единственном окне Chrome и циклически отображает их через iframe с заданными интервалами.
     """
+    ensure_not_quiet()
     # Создаем директорию для логов
     os.makedirs("/tmp/chrome_tabs_logs", exist_ok=True)
 
@@ -1424,6 +1592,7 @@ async def play_media(
     - YouTube плейлисты: правильный запуск с ytdl-raw-options
     - Другие URL: прямой запуск через MPV
     """
+    ensure_not_quiet()
     # Завершаем все текущие процессы воспроизведения
     kill_chrome_processes()
     kill_mpv_processes()
@@ -1523,6 +1692,7 @@ async def play_immich_album(
     """
     Создает и воспроизводит плейлист видео из указанного альбома Immich
     """
+    ensure_not_quiet()
     # Останавливаем все текущие процессы воспроизведения
     kill_chrome_processes()
     kill_mpv_processes()
@@ -1615,6 +1785,7 @@ async def show_webcam(
     Дефолты — публичная камера пляжа Бадалоны: её владельцы сами опубликовали
     доступ у себя на сайте, чтобы люди смотрели. Это не наши учётные данные.
     """
+    ensure_not_quiet()
     # Останавливаем все текущие процессы воспроизведения
     kill_chrome_processes()
     kill_mpv_processes()
@@ -1904,6 +2075,7 @@ def clock_stop():
 @app.get("/surface/clock-show")
 async def show_clock():
     """Запускает отображение часов на экране"""
+    ensure_not_quiet()
     if clock_start():
         return {"status": "success", "message": "Часы запущены", "log_file": "/tmp/overlay_clock.log"}
     raise HTTPException(status_code=500, detail="Часы не запустились, смотри /tmp/overlay_clock.log")
@@ -1936,6 +2108,7 @@ async def toggle_clock():
             "message": "Часы остановлены" if stopped else "Не удалось остановить часы",
             "action": "stop"
         }
+    ensure_not_quiet()
     started = clock_start()
     return {
         "status": "success" if started else "failed",

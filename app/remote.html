@@ -23,10 +23,11 @@
     border-radius: 14px; padding: 14px; margin-bottom: 14px;
   }
   .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
-             color: var(--dim); margin: 0 0 10px; }
+             color: var(--dim); margin: 0 0 10px; display: flex;
+             justify-content: space-between; align-items: center; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; }
   button {
-    flex: 1 1 calc(50% - 8px); min-height: 48px; border-radius: 10px;
+    flex: 1 1 calc(50% - 8px); min-height: 46px; border-radius: 10px;
     border: 1px solid var(--line); background: #232b34; color: var(--fg);
     font-size: 15px; cursor: pointer;
   }
@@ -34,6 +35,7 @@
   button.primary { background: #114d66; border-color: #1a6b8d; }
   button.danger  { background: #55201f; border-color: #7c2f2d; }
   button.wide { flex-basis: 100%; }
+  button.third { flex: 1 1 calc(33% - 8px); }
   .status-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
                  font-size: 14px; }
   .status-grid dt { color: var(--dim); }
@@ -46,17 +48,46 @@
           display: none; margin-top: 10px; }
   #toast {
     position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
-    background: #000c; color: var(--fg); padding: 10px 18px; border-radius: 10px;
+    background: #000d; color: var(--fg); padding: 10px 18px; border-radius: 10px;
     font-size: 14px; opacity: 0; transition: opacity .25s; pointer-events: none;
-    max-width: 90vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 90vw; z-index: 10;
   }
   #toast.show { opacity: 1; }
   input[type=range] { width: 100%; accent-color: var(--accent); }
-  #vol-label { color: var(--dim); font-size: 13px; }
-  pre#log {
+  input[type=time], input[type=text], input[type=number] {
+    background: #0b0e12; border: 1px solid var(--line); color: var(--fg);
+    border-radius: 8px; padding: 8px; font-size: 14px;
+  }
+  input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
+  .muted { color: var(--dim); font-size: 13px; }
+  pre.out {
     background: #0b0e12; border: 1px solid var(--line); border-radius: 10px;
     padding: 10px; font-size: 11px; line-height: 1.5; overflow-x: auto;
     max-height: 260px; overflow-y: auto; display: none; margin: 10px 0 0;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .day-row { display: grid; grid-template-columns: 28px 34px 1fr 14px 1fr;
+             gap: 6px; align-items: center; margin-bottom: 6px; font-size: 14px; }
+  .day-row.off input[type=time] { opacity: .35; }
+  .links a { color: var(--accent); text-decoration: none; display: block;
+             padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .links a:last-child { border-bottom: none; }
+  .switch { position: relative; width: 46px; height: 26px; flex: none; }
+  .switch input { display: none; }
+  .switch span {
+    position: absolute; inset: 0; background: #2a323c; border-radius: 99px;
+    transition: .2s; cursor: pointer;
+  }
+  .switch span::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px;
+    background: #8b98a5; border-radius: 50%; transition: .2s;
+  }
+  .switch input:checked + span { background: #114d66; }
+  .switch input:checked + span::after { transform: translateX(20px); background: var(--accent); }
+  label.file {
+    display: block; border: 1px dashed var(--line); border-radius: 10px;
+    padding: 12px; text-align: center; color: var(--dim); cursor: pointer;
+    font-size: 14px; margin-bottom: 8px;
   }
 </style>
 </head>
@@ -64,7 +95,7 @@
 <h1>Киоск <small id="host"></small></h1>
 
 <div class="card">
-  <h2>Состояние</h2>
+  <h2>Состояние <span id="quiet-badge"></span></h2>
   <dl class="status-grid" id="status">
     <dt>Загрузка…</dt><dd></dd>
   </dl>
@@ -73,6 +104,21 @@
     <button onclick="toggleShot()">Скриншот</button>
   </div>
   <img id="shot" alt="Экран киоска">
+</div>
+
+<div class="card">
+  <h2>Режим тишины
+    <label class="switch"><input type="checkbox" id="q-enabled" onchange="saveQuiet()"><span></span></label>
+  </h2>
+  <div class="muted" style="margin-bottom:10px">
+    В тихое окно экран гаснет и ничто его не будит: AirPlay, запуски и
+    восстановления игнорируются. После окна киоск возвращается сам.
+    Окно через полночь — нормально (23:00 → 08:00).
+  </div>
+  <div id="q-days"></div>
+  <div class="row" style="margin-top:8px">
+    <button class="primary wide" onclick="saveQuiet(true)">Сохранить расписание</button>
+  </div>
 </div>
 
 <div class="card">
@@ -96,12 +142,47 @@
 
 <div class="card">
   <h2>Звук</h2>
-  <div id="vol-label">Громкость: …</div>
-  <input type="range" id="vol" min="0" max="150" step="5"
-         onchange="setVolume(this.value)">
+  <div class="muted" id="vol-label">Громкость: …</div>
+  <input type="range" id="vol" min="0" max="150" step="5" onchange="setVolume(this.value)">
   <div class="row" style="margin-top:8px">
-    <button onclick="call('/surface/toggle-mute', 'Звук переключён')">Вкл/выкл звук</button>
+    <button class="third" onclick="call('/surface/system-volume-down', 'Тише')">−5%</button>
+    <button class="third" onclick="call('/surface/toggle-mute', 'Звук переключён')">Mute</button>
+    <button class="third" onclick="call('/surface/system-volume-up', 'Громче')">+5%</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Объявление (TTS)</h2>
+  <label class="file" for="tts-file" id="tts-label">Выбрать аудиофайл…</label>
+  <input type="file" id="tts-file" accept="audio/*" style="display:none"
+         onchange="document.getElementById('tts-label').textContent = this.files[0]?.name || 'Выбрать аудиофайл…'">
+  <div class="row" style="align-items:center">
+    <span class="muted">Громкость</span>
+    <input type="number" id="tts-vol" value="90" min="0" max="150" style="width:70px">
+    <label class="muted" style="display:flex;align-items:center;gap:6px">
+      <input type="checkbox" id="tts-ding" checked> сигнал перед
+    </label>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="primary wide" onclick="playTts()">Проиграть на киоске</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Плеер (MPV)</h2>
+  <div class="row">
+    <button class="third" onclick="call('/surface/playback-prev', '⏮')">⏮</button>
+    <button class="third" onclick="call('/surface/playback-toggle', '⏯')">⏯</button>
+    <button class="third" onclick="call('/surface/playback-next', '⏭')">⏭</button>
+    <button class="wide" onclick="call('/surface/toggle-fill', 'Режим заполнения переключён')">Обрезка / полосы</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Часы</h2>
+  <div class="row">
     <button onclick="call('/surface/clock-toggle', 'Часы переключены')">Часы вкл/выкл</button>
+    <button onclick="call('/surface/clock-status')">Статус часов</button>
   </div>
 </div>
 
@@ -111,13 +192,33 @@
     <button onclick="showLogs()">Показать лог</button>
     <button class="danger" onclick="rebootKiosk()">Перезагрузить</button>
   </div>
-  <pre id="log"></pre>
+  <div class="row" style="margin-top:8px">
+    <input type="text" id="cmd" placeholder="произвольная команда…" style="flex:1 1 100%">
+    <button class="wide" onclick="runCmd()">Выполнить</button>
+  </div>
+  <pre class="out" id="log"></pre>
+  <pre class="out" id="cmd-out"></pre>
+</div>
+
+<div class="card links">
+  <h2>Ссылки</h2>
+  <a href="/docs" target="_blank">Swagger — вся документация API, можно дёргать кнопками</a>
+  <a href="/" target="_blank">Список всех эндпоинтов (JSON)</a>
+  <a href="/surface/health" target="_blank">Health — состояние киоска одним JSON</a>
+  <a href="/surface/logs?lines=200" target="_blank">Лог киоска (200 строк)</a>
+  <a href="/surface/screenshot" target="_blank">Скриншот экрана (PNG)</a>
+  <a href="/surface/quiet-state" target="_blank">Режим тишины — текущий конфиг</a>
 </div>
 
 <div id="toast"></div>
 
 <script>
   document.getElementById('host').textContent = location.hostname;
+
+  const DAYS = [
+    ['mon', 'Пн'], ['tue', 'Вт'], ['wed', 'Ср'], ['thu', 'Чт'],
+    ['fri', 'Пт'], ['sat', 'Сб'], ['sun', 'Вс'],
+  ];
 
   let toastTimer;
   function toast(msg, isError) {
@@ -126,7 +227,7 @@
     el.style.color = isError ? 'var(--bad)' : 'var(--fg)';
     el.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
   }
 
   async function call(path, okMsg) {
@@ -135,17 +236,14 @@
       const r = await fetch(path);
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.detail || r.status);
-      toast(okMsg || data.message || 'Готово');
+      toast(okMsg || data.message || JSON.stringify(data));
       setTimeout(refreshStatus, 1500);
     } catch (e) {
       toast('Ошибка: ' + e.message, true);
     }
   }
 
-  function pill(state, okValues) {
-    const ok = okValues.includes(state);
-    return `<span class="pill ${ok ? 'ok' : 'bad'}">${state ?? '?'}</span>`;
-  }
+  function pill(text, cls) { return `<span class="pill ${cls}">${text}</span>`; }
 
   async function refreshStatus() {
     try {
@@ -157,13 +255,13 @@
       const upStr = up >= 86400 ? Math.floor(up / 86400) + 'д ' + Math.floor(up % 86400 / 3600) + 'ч'
                   : Math.floor(up / 3600) + 'ч ' + Math.floor(up % 3600 / 60) + 'м';
       const rows = [
-        ['Браузер', h.browser_processes > 0 ? pill('работает', ['работает']) : pill('нет', [])],
-        ['Экран', h.display.active_output ?? h.display.output,],
-        ['Подсветка', backlightOn ? pill('горит', ['горит']) : pill('погашена', [])],
+        ['Браузер', h.browser_processes > 0 ? pill('работает', 'ok') : pill('нет', 'bad')],
+        ['Экран', h.display.active_output ?? h.display.output],
+        ['Подсветка', backlightOn ? pill('горит', 'ok') : pill('погашена', 'warn')],
         ['AirPlay', h.airplay.session_active
-            ? pill('трансляция: ' + h.airplay.clients.join(', '), [])
-            : pill(h.units['airplay-video.service'], ['active'])],
-        ['Питание', powerOk ? pill('ок', ['ок']) : pill(throttled || '?', [])],
+            ? pill('трансляция: ' + h.airplay.clients.join(', '), 'warn')
+            : pill(h.units['airplay-video.service'], h.units['airplay-video.service'] === 'active' ? 'ok' : 'bad')],
+        ['Питание', powerOk ? pill('ок', 'ok') : pill(throttled || '?', 'bad')],
         ['Температура', (h.power.temperature || '?').replace('temp=', '')],
         ['Аптайм', upStr],
         ['Память', h.system.memory_used_percent + '%'],
@@ -174,13 +272,14 @@
         rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     } catch (e) {
       document.getElementById('status').innerHTML =
-        `<dt>API</dt><dd>${pill('недоступен', [])}</dd>`;
+        `<dt>API</dt><dd>${pill('недоступен', 'bad')}</dd>`;
     }
     try {
       const v = await (await fetch('/surface/system-volume')).json();
       document.getElementById('vol').value = v.volume;
       document.getElementById('vol-label').textContent = 'Громкость: ' + v.volume + '%';
-    } catch (e) { /* без звука статус всё равно полезен */ }
+    } catch (e) { /* звук не критичен для статуса */ }
+    refreshQuietBadge();
   }
 
   async function setVolume(v) {
@@ -215,7 +314,119 @@
     }
   }
 
+  async function runCmd() {
+    const cmd = document.getElementById('cmd').value.trim();
+    if (!cmd) return;
+    const pre = document.getElementById('cmd-out');
+    pre.style.display = 'block';
+    pre.textContent = '…';
+    try {
+      const r = await fetch('/surface/custom-command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd }),
+      });
+      const data = await r.json();
+      pre.textContent = (data.stdout || '') + (data.stderr || '') || `(exit ${data.exit_code})`;
+    } catch (e) {
+      pre.textContent = 'Ошибка: ' + e.message;
+    }
+  }
+
+  async function playTts() {
+    const file = document.getElementById('tts-file').files[0];
+    if (!file) { toast('Сначала выбери аудиофайл', true); return; }
+    const form = new FormData();
+    form.append('audio_file', file);
+    form.append('main_volume', document.getElementById('tts-vol').value);
+    form.append('play_notification', document.getElementById('tts-ding').checked);
+    toast('Отправляю…');
+    try {
+      const r = await fetch('/surface/tts-play-upload', { method: 'POST', body: form });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || r.status);
+      toast('Играет на киоске');
+    } catch (e) {
+      toast('Ошибка: ' + e.message, true);
+    }
+  }
+
+  // ---------------- Режим тишины ----------------
+
+  function dayRow(key, label, day) {
+    const enabled = day && day.enabled !== false && day.start;
+    return `<div class="day-row ${enabled ? '' : 'off'}" id="qd-${key}">
+      <input type="checkbox" ${enabled ? 'checked' : ''}
+             onchange="document.getElementById('qd-${key}').classList.toggle('off', !this.checked)">
+      <span>${label}</span>
+      <input type="time" value="${day?.start || '23:00'}">
+      <span class="muted">→</span>
+      <input type="time" value="${day?.end || '08:00'}">
+    </div>`;
+  }
+
+  async function loadQuiet() {
+    try {
+      const q = await (await fetch('/surface/quiet-state')).json();
+      document.getElementById('q-enabled').checked = q.enabled;
+      document.getElementById('q-days').innerHTML =
+        DAYS.map(([key, label]) => dayRow(key, label, q.days[key])).join('');
+      showQuietBadge(q);
+    } catch (e) {
+      document.getElementById('q-days').innerHTML =
+        '<div class="muted">Не удалось загрузить конфиг</div>';
+    }
+  }
+
+  function collectQuiet() {
+    const days = {};
+    for (const [key] of DAYS) {
+      const row = document.getElementById('qd-' + key);
+      const inputs = row.querySelectorAll('input');
+      days[key] = {
+        enabled: inputs[0].checked,
+        start: inputs[1].value || '23:00',
+        end: inputs[2].value || '08:00',
+      };
+    }
+    return { enabled: document.getElementById('q-enabled').checked, days };
+  }
+
+  async function saveQuiet(explicit) {
+    const cfg = collectQuiet();
+    try {
+      const r = await fetch('/surface/quiet-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || r.status);
+      showQuietBadge(data);
+      toast(cfg.enabled
+        ? (data.quiet_now ? 'Сохранено — сейчас тихое окно, экран погаснет' : 'Сохранено, режим включён')
+        : 'Сохранено, режим выключен');
+    } catch (e) {
+      toast('Ошибка: ' + e.message, true);
+    }
+  }
+
+  function showQuietBadge(q) {
+    const el = document.getElementById('quiet-badge');
+    if (!q.enabled) { el.innerHTML = ''; return; }
+    el.innerHTML = q.quiet_now
+      ? pill('тихое окно', 'warn')
+      : pill('тишина: вкл', 'ok');
+  }
+
+  async function refreshQuietBadge() {
+    try {
+      showQuietBadge(await (await fetch('/surface/quiet-state')).json());
+    } catch (e) { /* бейдж не критичен */ }
+  }
+
   refreshStatus();
+  loadQuiet();
   setInterval(refreshStatus, 30000);
 </script>
 </body>

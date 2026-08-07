@@ -27,6 +27,14 @@ log() {
 mkdir -p /var/lib/kiosk
 systemctl is-active --quiet airplay-video.service || exit 0
 
+# Quiet hours: pretend AirPlay does not exist. No waking the screen, no
+# killing the browser, no restore - the phone may connect, but nothing on
+# this box reacts. If the API is down the check fails open (not quiet).
+if curl -s -m 5 "http://127.0.0.1:${API_PORT}/surface/quiet-state" 2>/dev/null \
+        | grep -q '"quiet_now": *true'; then
+    exit 0
+fi
+
 # Anything talking to the mirroring ports counts as an active session.
 conns=$(ss -tn state established 2>/dev/null \
         | awk -v p=":$PORT" 'NR>1 && ($3 ~ p"$" || $3 ~ ":"(substr(p,2)+1)"$" || $3 ~ ":"(substr(p,2)+2)"$")' \

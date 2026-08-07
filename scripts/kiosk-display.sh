@@ -27,15 +27,22 @@ log() {
 
 # Mark the OFF as intentional before touching anything, so kiosk-output does
 # not relight the panel on its next tick. The API does the same when called
-# directly; doing it here too covers the xrandr fallback path.
+# directly; doing it here too covers the xrandr fallback path. The ON case
+# clears the flag only after something actually turned the panel on - clearing
+# it up front would strip the quiet-mode mark while quiet hours still hold.
 if [ "$action" = off ]; then
     date +%s >/var/lib/kiosk/display_off 2>/dev/null || true
-else
-    rm -f /var/lib/kiosk/display_off 2>/dev/null || true
 fi
 
 code=$(curl -s -m 15 -o /dev/null -w '%{http_code}' \
        "http://127.0.0.1:${API_PORT}/surface/display-${action}" 2>/dev/null)
+
+# 409 is not "API down", it is quiet hours saying no. Falling back to raw
+# xrandr here would punch straight through the quiet mode.
+if [ "$code" = "409" ]; then
+    log "display $action refused: quiet hours"
+    exit 0
+fi
 
 if [ "$code" != "200" ]; then
     log "API returned ${code:-000}, falling back to xrandr"
@@ -62,5 +69,9 @@ for bl in /sys/class/backlight/*/; do
         echo 0 >"${bl}bl_power" 2>/dev/null
     fi
 done
+
+if [ "$action" = on ]; then
+    rm -f /var/lib/kiosk/display_off 2>/dev/null || true
+fi
 
 log "display $action (API HTTP ${code:-000})"
