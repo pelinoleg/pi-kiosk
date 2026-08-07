@@ -37,6 +37,12 @@ had=$(cat "$STATE" 2>/dev/null || echo 0)
 if [ "$conns" -gt 0 ]; then
     if [ "$had" != 1 ]; then
         log "AirPlay session started, standing the browser down"
+        # The panel may be deliberately off (display-off, night schedule) -
+        # someone mirroring their phone clearly wants it awake. display-on
+        # also clears the display_off flag; the rm is a fallback for when the
+        # API is not answering, so kiosk-output relights the panel instead.
+        curl -s -m 10 -o /dev/null "http://127.0.0.1:${API_PORT}/surface/display-on" 2>/dev/null \
+            || rm -f /var/lib/kiosk/display_off 2>/dev/null
         # Chromium runs --kiosk fullscreen and sits on top of uxplay's window,
         # so a mirroring session is invisible until the browser is out of the
         # way. Openbox will not reorder them for us. kiosk-restore brings the
