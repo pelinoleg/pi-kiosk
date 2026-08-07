@@ -366,7 +366,7 @@ def save_immich_files(playlist_content: str, script_content: str) -> None:
 # API эндпоинты
 ########################
 
-@app.get("/")
+@app.get("/", tags=["Система и пульт"])
 async def root():
     """Корневой эндпоинт с информацией об API"""
     # Список маршрутов собирается из самого приложения: рукописный перечень
@@ -388,7 +388,7 @@ async def root():
     }
 
 
-@app.get("/surface/status")
+@app.get("/surface/status", tags=["Система и пульт"])
 async def system_status():
     """Получение общего статуса системы"""
     try:
@@ -441,7 +441,7 @@ async def system_status():
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
 
-@app.get("/surface/processes")
+@app.get("/surface/processes", tags=["Система и пульт"])
 async def get_system_processes():
     """Получение информации о запущенных процессах"""
     try:
@@ -455,7 +455,7 @@ async def get_system_processes():
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
 
-@app.get("/surface/display-state")
+@app.get("/surface/display-state", tags=["Экран"])
 async def get_display_state():
     """Получение текущего состояния дисплея"""
     display_cmd = f"DISPLAY=:0 xrandr --query | grep '^{DISPLAY_OUTPUT}'"
@@ -648,7 +648,7 @@ def ensure_not_quiet():
         )
 
 
-@app.get("/surface/quiet-state")
+@app.get("/surface/quiet-state", tags=["Режим тишины"])
 async def quiet_state():
     """Состояние режима тишины: конфиг, переопределение и тихо ли сейчас"""
     cfg = load_quiet_config()
@@ -660,7 +660,7 @@ async def quiet_state():
             "override": override or None, "days": cfg.get("days", {})}
 
 
-@app.post("/surface/quiet-config")
+@app.post("/surface/quiet-config", tags=["Режим тишины"])
 async def quiet_config(cfg: QuietConfig):
     """Сохранение конфига режима тишины (сбрасывает ручные переопределения)"""
     for name, day in cfg.days.items():
@@ -678,7 +678,7 @@ async def quiet_config(cfg: QuietConfig):
             "days": data["days"]}
 
 
-@app.get("/surface/quiet-force-on")
+@app.get("/surface/quiet-force-on", tags=["Режим тишины"])
 async def quiet_force_on():
     """Тихо прямо сейчас: экран гаснет немедленно, до явной отмены"""
     cfg = load_quiet_config()
@@ -693,7 +693,7 @@ async def quiet_force_on():
             "quiet_now": True}
 
 
-@app.get("/surface/quiet-force-off")
+@app.get("/surface/quiet-force-off", tags=["Режим тишины"])
 async def quiet_force_off():
     """Отменить тишину сейчас: экран и киоск возвращаются немедленно.
 
@@ -758,7 +758,7 @@ async def _start_quiet_enforcer():
     threading.Thread(target=_quiet_enforcer, daemon=True).start()
 
 
-@app.get("/surface/display-on")
+@app.get("/surface/display-on", tags=["Экран"])
 async def turn_display_on():
     """Включение дисплея"""
     ensure_not_quiet()
@@ -772,7 +772,7 @@ async def turn_display_on():
         raise HTTPException(status_code=500, detail=f"Ошибка включения дисплея: {result['stderr']}")
 
 
-@app.get("/surface/display-off")
+@app.get("/surface/display-off", tags=["Экран"])
 async def turn_display_off():
     """Выключение дисплея"""
     # Флаг ставится до xrandr, чтобы сторож выходов не успел вклиниться между
@@ -792,7 +792,7 @@ async def turn_display_off():
         raise HTTPException(status_code=500, detail=f"Ошибка выключения дисплея: {result['stderr']}")
 
 
-@app.get("/surface/playback-status")
+@app.get("/surface/playback-status", tags=["Контент и плеер"])
 def get_playback_status():
     """Проверка статуса MPV, включая паузу, с защитой от зависаний"""
 
@@ -875,7 +875,7 @@ def get_playback_status():
         }
 
 
-@app.get("/surface/audio-outputs")
+@app.get("/surface/audio-outputs", tags=["Звук и Bluetooth"])
 async def get_audio_outputs():
     """Получение списка аудио выходов"""
     # Получаем список всех аудио выходов
@@ -920,7 +920,7 @@ async def get_audio_outputs():
     return {"outputs": outputs, "default_sink": current_sink}
 
 
-@app.get("/surface/system-volume")
+@app.get("/surface/system-volume", tags=["Звук и Bluetooth"])
 async def get_system_volume():
     """Получение текущей громкости системы"""
     volume = get_current_volume()
@@ -929,7 +929,7 @@ async def get_system_volume():
     return {"volume": volume}
 
 
-@app.get("/surface/system-volume/{volume}")
+@app.get("/surface/system-volume/{volume}", tags=["Звук и Bluetooth"])
 async def set_system_volume(volume: int):
     """Установка громкости системы через GET-запрос для удобства"""
     if volume < 0:
@@ -946,7 +946,7 @@ async def set_system_volume(volume: int):
         raise HTTPException(status_code=500, detail=f"Ошибка установки громкости: {result['stderr']}")
 
 
-@app.post("/surface/system-volume")
+@app.post("/surface/system-volume", tags=["Звук и Bluetooth"])
 async def set_system_volume_post(volume: int = Query(..., ge=0, le=150)):
     """Установка громкости системы"""
     cmd = f"amixer -D pulse sset Master {volume}%"
@@ -958,7 +958,7 @@ async def set_system_volume_post(volume: int = Query(..., ge=0, le=150)):
         raise HTTPException(status_code=500, detail=f"Ошибка установки громкости: {result['stderr']}")
 
 
-@app.get("/surface/system-volume-up")
+@app.get("/surface/system-volume-up", tags=["Звук и Bluetooth"])
 async def system_volume_up():
     """Увеличение громкости системы на 5%"""
     cmd = "amixer -D pulse sset Master 5%+"
@@ -973,7 +973,7 @@ async def system_volume_up():
         raise HTTPException(status_code=500, detail=f"Ошибка увеличения громкости: {result['stderr']}")
 
 
-@app.get("/surface/system-volume-down")
+@app.get("/surface/system-volume-down", tags=["Звук и Bluetooth"])
 async def system_volume_down():
     """Уменьшение громкости системы на 5%"""
     cmd = "amixer -D pulse sset Master 5%-"
@@ -1010,7 +1010,7 @@ def set_default_sink(sink_id: str):
         logger.warning(f"Не удалось запомнить аудиовыход: {e}")
 
 
-@app.get("/surface/set-audio-output/{sink_id}")
+@app.get("/surface/set-audio-output/{sink_id}", tags=["Звук и Bluetooth"])
 async def set_audio_output(sink_id: str):
     """Переключение аудио выхода; выбор запоминается и переживает перезагрузку"""
     try:
@@ -1058,13 +1058,13 @@ def _bt_device_list():
     return devices
 
 
-@app.get("/surface/bt-devices")
+@app.get("/surface/bt-devices", tags=["Звук и Bluetooth"])
 async def bt_devices():
     """Известные Bluetooth-устройства и их состояние"""
     return {"devices": _bt_device_list()}
 
 
-@app.get("/surface/bt-scan")
+@app.get("/surface/bt-scan", tags=["Звук и Bluetooth"])
 def bt_scan(seconds: int = Query(12, ge=3, le=30)):
     """Поиск Bluetooth-устройств рядом (блокирует на время поиска).
 
@@ -1097,7 +1097,7 @@ def _bt_connect_core(mac: str):
     return None
 
 
-@app.get("/surface/bt-connect/{mac}")
+@app.get("/surface/bt-connect/{mac}", tags=["Звук и Bluetooth"])
 def bt_connect(mac: str):
     """Подключить Bluetooth-колонку и сразу перевести звук на неё"""
     _bt_check_mac(mac)
@@ -1153,7 +1153,7 @@ def resolve_sink_target(target: str) -> str:
     return sink
 
 
-@app.get("/surface/audio-to/{target}")
+@app.get("/surface/audio-to/{target}", tags=["Звук и Bluetooth"])
 def audio_to(target: str):
     """Перевести звук на выход по короткому имени: bt, usb, hdmi, jack.
 
@@ -1168,7 +1168,7 @@ def audio_to(target: str):
     return {"message": f"Звук идёт на {sink}", "target": target, "sink": sink}
 
 
-@app.get("/surface/bt-disconnect/{mac}")
+@app.get("/surface/bt-disconnect/{mac}", tags=["Звук и Bluetooth"])
 def bt_disconnect(mac: str):
     """Отключить Bluetooth-устройство (остаётся сопряжённым)"""
     _bt_check_mac(mac)
@@ -1176,7 +1176,7 @@ def bt_disconnect(mac: str):
     return {"message": "Отключено", "mac": mac}
 
 
-@app.get("/surface/bt-forget/{mac}")
+@app.get("/surface/bt-forget/{mac}", tags=["Звук и Bluetooth"])
 def bt_forget(mac: str):
     """Забыть Bluetooth-устройство совсем"""
     _bt_check_mac(mac)
@@ -1286,7 +1286,7 @@ async def _start_player_watch():
     threading.Thread(target=_player_watch, daemon=True).start()
 
 
-@app.get("/surface/bt-keepalive")
+@app.get("/surface/bt-keepalive", tags=["Звук и Bluetooth"])
 async def bt_keepalive_state():
     """Настройка «не давать колонке уснуть»: интервал пингов тишиной"""
     sink = run_command("pactl get-default-sink")["stdout"].strip()
@@ -1294,7 +1294,7 @@ async def bt_keepalive_state():
             "relevant": sink.startswith("bluez")}
 
 
-@app.get("/surface/bt-keepalive/{seconds}")
+@app.get("/surface/bt-keepalive/{seconds}", tags=["Звук и Bluetooth"])
 async def bt_keepalive_set(seconds: int):
     """Задать интервал пингов (0 — выключить); применяется на лету"""
     if not 0 <= seconds <= 3600:
@@ -1309,7 +1309,7 @@ async def bt_keepalive_set(seconds: int):
             "seconds": seconds}
 
 
-@app.get("/surface/toggle-mute")
+@app.get("/surface/toggle-mute", tags=["Звук и Bluetooth"])
 async def toggle_mute():
     """Включение/выключение звука"""
     # В тихое окно звук выключен стражем; один тап здесь снимал бы mute
@@ -1334,7 +1334,7 @@ async def toggle_mute():
         raise HTTPException(status_code=500, detail=f"Ошибка переключения звука: {result['stderr']}")
 
 
-@app.get("/surface/playback-play")
+@app.get("/surface/playback-play", tags=["Контент и плеер"])
 async def playback_play():
     """Запуск воспроизведения MPV"""
     if not os.path.exists(MPV_SOCKET):
@@ -1348,7 +1348,7 @@ async def playback_play():
     return {"status": "playing", "message": "Воспроизведение запущено"}
 
 
-@app.get("/surface/playback-pause")
+@app.get("/surface/playback-pause", tags=["Контент и плеер"])
 async def playback_pause():
     """Приостановка воспроизведения MPV"""
     if not os.path.exists(MPV_SOCKET):
@@ -1362,7 +1362,7 @@ async def playback_pause():
     return {"status": "paused", "message": "Воспроизведение приостановлено"}
 
 
-@app.get("/surface/playback-toggle")
+@app.get("/surface/playback-toggle", tags=["Контент и плеер"])
 async def playback_toggle():
     """Переключение паузы/воспроизведения MPV"""
     if not os.path.exists(MPV_SOCKET):
@@ -1380,7 +1380,7 @@ async def playback_toggle():
     return {"status": status, "message": f"Воспроизведение {'приостановлено' if status == 'paused' else 'запущено'}"}
 
 
-@app.get("/surface/playback-next")
+@app.get("/surface/playback-next", tags=["Контент и плеер"])
 async def playback_next():
     """Переход к следующему треку в плейлисте MPV"""
     if not os.path.exists(MPV_SOCKET):
@@ -1394,7 +1394,7 @@ async def playback_next():
     return {"message": "Переход к следующему треку выполнен"}
 
 
-@app.get("/surface/playback-prev")
+@app.get("/surface/playback-prev", tags=["Контент и плеер"])
 async def playback_prev():
     """Переход к предыдущему треку в плейлисте MPV"""
     if not os.path.exists(MPV_SOCKET):
@@ -1408,7 +1408,7 @@ async def playback_prev():
     return {"message": "Переход к предыдущему треку выполнен"}
 
 
-@app.get("/surface/playback-seek/{seconds}")
+@app.get("/surface/playback-seek/{seconds}", tags=["Контент и плеер"])
 async def playback_seek(seconds: int):
     """Перемотка вперед/назад в MPV"""
     if not os.path.exists(MPV_SOCKET):
@@ -1422,7 +1422,7 @@ async def playback_seek(seconds: int):
     return {"message": f"Выполнена перемотка на {seconds} секунд"}
 
 
-@app.get("/surface/toggle-fill")
+@app.get("/surface/toggle-fill", tags=["Контент и плеер"])
 async def toggle_fill():
     """Переключение режима заполнения экрана в MPV"""
     if not os.path.exists(MPV_SOCKET):
@@ -1450,7 +1450,7 @@ async def toggle_fill():
 _last_killall = 0.0
 
 
-@app.get("/surface/kill-all")
+@app.get("/surface/kill-all", tags=["Контент и плеер"])
 async def kill_all():
     """Завершение всех процессов Chrome и MPV"""
     global _last_killall
@@ -1465,7 +1465,7 @@ async def kill_all():
     }
 
 
-@app.get("/surface/reboot")
+@app.get("/surface/reboot", tags=["Система и пульт"])
 async def reboot_system():
     """Перезагрузка системы"""
     # Запускаем команду в фоне и не ждем результата
@@ -1519,7 +1519,7 @@ def _airplay_restore_kiosk():
     run_command(f"sudo systemctl restart --no-block {KIOSK_RESTORE_UNIT}")
 
 
-@app.get("/surface/airplay-state")
+@app.get("/surface/airplay-state", tags=["AirPlay"])
 async def airplay_state():
     """Состояние приёма AirPlay: сервисы и активная сессия"""
     clients = _airplay_session_clients()
@@ -1531,7 +1531,7 @@ async def airplay_state():
     }
 
 
-@app.get("/surface/airplay-on")
+@app.get("/surface/airplay-on", tags=["AirPlay"])
 async def airplay_on():
     """Включение приёма AirPlay"""
     result = run_command(f"sudo systemctl start {AIRPLAY_VIDEO_UNIT} {AIRPLAY_AUDIO_UNIT}")
@@ -1544,7 +1544,7 @@ async def airplay_on():
     }
 
 
-@app.get("/surface/airplay-off")
+@app.get("/surface/airplay-off", tags=["AirPlay"])
 async def airplay_off():
     """Выключение приёма AirPlay; экран возвращается к киоску"""
     had_session = bool(_airplay_session_clients())
@@ -1557,7 +1557,7 @@ async def airplay_off():
     return {"message": "AirPlay выключен", "interrupted_session": had_session}
 
 
-@app.get("/surface/airplay-kick")
+@app.get("/surface/airplay-kick", tags=["AirPlay"])
 async def airplay_kick():
     """Сброс зависшего клиента: перезапуск видеоприёмника AirPlay"""
     clients = _airplay_session_clients()
@@ -1581,7 +1581,7 @@ HEALTH_UNITS = (
 )
 
 
-@app.get("/surface/screenshot")
+@app.get("/surface/screenshot", tags=["Экран"])
 async def take_screenshot():
     """Скриншот текущего экрана (PNG)"""
     result = run_command(f"DISPLAY=:0 scrot -o {SCREENSHOT_FILE}")
@@ -1590,7 +1590,7 @@ async def take_screenshot():
     return FileResponse(SCREENSHOT_FILE, media_type="image/png", filename="kiosk-screen.png")
 
 
-@app.get("/surface/health")
+@app.get("/surface/health", tags=["Система и пульт"])
 async def health():
     """Сводное состояние киоска одним JSON"""
     units = {unit: unit_state(unit) for unit in HEALTH_UNITS}
@@ -1638,7 +1638,7 @@ async def health():
     }
 
 
-@app.get("/surface/logs")
+@app.get("/surface/logs", tags=["Система и пульт"])
 async def tail_logs(lines: int = Query(50, ge=1, le=1000)):
     """Хвост общего лога киоска (/var/log/kiosk.log)"""
     result = run_command(f"tail -n {lines} {KIOSK_LOG_FILE}")
@@ -1655,7 +1655,7 @@ def _connected_outputs():
     return [line.split()[0] for line in result["stdout"].splitlines() if line.strip()]
 
 
-@app.get("/surface/output-state")
+@app.get("/surface/output-state", tags=["Экран"])
 async def output_state():
     """Видеовыходы: какие подключены, какой активен, есть ли ручной выбор"""
     def read(path):
@@ -1670,7 +1670,7 @@ async def output_state():
     }
 
 
-@app.get("/surface/output-set/{output}")
+@app.get("/surface/output-set/{output}", tags=["Экран"])
 async def output_set(output: str):
     """Выбор экрана: имя выхода (HDMI-2, DSI-1, ...) или auto.
 
@@ -1692,7 +1692,7 @@ async def output_set(output: str):
     return {"message": f"Экран: {output}", "override": output, "connected": connected}
 
 
-@app.get("/surface/restore")
+@app.get("/surface/restore", tags=["Контент и плеер"])
 async def restore_screen():
     """Вернуть на экран то, что киоск должен показывать (kiosk-restore)"""
     ensure_not_quiet()
@@ -1700,7 +1700,7 @@ async def restore_screen():
     return {"message": "Восстановление запущено, экран вернётся через несколько секунд"}
 
 
-@app.get("/surface/remote")
+@app.get("/surface/remote", tags=["Система и пульт"])
 async def remote_ui():
     """Веб-пульт: управление киоском с телефона"""
     if not os.path.exists(REMOTE_HTML_FILE):
@@ -1715,31 +1715,31 @@ def _remote_asset(filename: str, media_type: str):
     return FileResponse(path, media_type=media_type)
 
 
-@app.get("/surface/remote-manifest.json")
+@app.get("/surface/remote-manifest.json", tags=["Система и пульт"])
 async def remote_manifest():
     """PWA-манифест пульта"""
     return _remote_asset("remote-manifest.json", "application/manifest+json")
 
 
-@app.get("/surface/remote-icon-192.png")
+@app.get("/surface/remote-icon-192.png", tags=["Система и пульт"])
 async def remote_icon_192():
     """Иконка пульта 192x192"""
     return _remote_asset("remote-icon-192.png", "image/png")
 
 
-@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.ico", tags=["Система и пульт"], include_in_schema=False)
 async def favicon():
     """Иконка вкладки для всех страниц API (в т.ч. /docs)"""
     return _remote_asset("remote-icon-192.png", "image/png")
 
 
-@app.get("/surface/remote-icon-512.png")
+@app.get("/surface/remote-icon-512.png", tags=["Система и пульт"])
 async def remote_icon_512():
     """Иконка пульта 512x512"""
     return _remote_asset("remote-icon-512.png", "image/png")
 
 
-@app.post("/surface/custom-command")
+@app.post("/surface/custom-command", tags=["Система и пульт"])
 async def custom_command(command_req: CustomCommandRequest):
     """Выполнение произвольной команды"""
     # Проверка команды на безопасность можно добавить здесь
@@ -1755,7 +1755,7 @@ async def custom_command(command_req: CustomCommandRequest):
     }
 
 
-@app.get("/surface/custom-command-get")
+@app.get("/surface/custom-command-get", tags=["Система и пульт"])
 async def custom_command_get(command: str = Query(...)):
     """Выполнение произвольной команды через GET для удобства"""
     result = run_command(command)
@@ -1956,7 +1956,7 @@ def play_announcement(path: str, volume: int, notification: bool,
     return prev
 
 
-@app.get("/surface/tts-say")
+@app.get("/surface/tts-say", tags=["TTS"])
 def tts_say(
         text: str = Query(..., min_length=1, max_length=1000, description="Текст для озвучки"),
         lang: str = Query("ro", description="Язык (ro, es, ru, en, ...)"),
@@ -2027,7 +2027,7 @@ def tts_say(
     raise HTTPException(status_code=502, detail="; ".join(errors))
 
 
-@app.get("/tts/google")
+@app.get("/tts/google", tags=["TTS"])
 def tts_google_compat(
         text: str = Query(..., description="Текст для озвучивания"),
         lang: str = Query("ro", description="Язык"),
@@ -2051,7 +2051,7 @@ def tts_google_compat(
     )
 
 
-@app.get("/tts/openai")
+@app.get("/tts/openai", tags=["TTS"])
 def tts_openai_compat(
         text: str = Query(..., description="Текст для озвучивания"),
         volume: float = Query(None, ge=0.0, le=2.0),
@@ -2067,7 +2067,7 @@ def tts_openai_compat(
     )
 
 
-@app.get("/surface/tts-voices")
+@app.get("/surface/tts-voices", tags=["TTS"])
 async def tts_voices():
     """Доступные голоса (Google по языкам, OpenAI) и текущие настройки"""
     voices = {}
@@ -2080,7 +2080,7 @@ async def tts_voices():
             "google_key": bool(GOOGLE_TTS_API_KEY), "openai_key": bool(OPENAI_API_KEY)}
 
 
-@app.post("/surface/tts-settings")
+@app.post("/surface/tts-settings", tags=["TTS"])
 async def tts_settings_update(update: Dict[str, Any]):
     """Обновить настройки TTS (принимает любые ключи из настроек)"""
     settings = load_tts_settings()
@@ -2112,7 +2112,7 @@ async def tts_settings_update(update: Dict[str, Any]):
     return {"message": "Сохранено", "settings": settings}
 
 
-@app.post("/surface/tts-play-upload")
+@app.post("/surface/tts-play-upload", tags=["TTS"])
 async def play_uploaded_audio(
         audio_file: UploadFile = File(..., description="Аудиофайл для воспроизведения"),
         main_volume: int = Form(100, description="Громкость воспроизведения основного аудио (0-150)"),
@@ -2238,7 +2238,7 @@ async def play_uploaded_audio(
         raise HTTPException(status_code=500, detail=f"Ошибка воспроизведения: {str(e)}")
 
 
-@app.get("/surface/chrome-tabs")
+@app.get("/surface/chrome-tabs", tags=["Контент и плеер"])
 async def chrome_tabs_slideshow(
         urls: List[str] = Query(None, description="URLs для отображения"),
         times: List[int] = Query(None, description="Продолжительность отображения каждого таба в секундах")
@@ -2446,7 +2446,7 @@ xrandr --output {DISPLAY_OUTPUT} --auto
     }
 
 
-@app.get("/surface/play")
+@app.get("/surface/play", tags=["Контент и плеер"])
 def play_media(
         url: str = Query(..., description="URL медиа для воспроизведения"),
         volume: int = Query(100, ge=0, le=150, description="Громкость воспроизведения (0-150)"),
@@ -2474,6 +2474,23 @@ def play_media(
     if not re.match(r"^(https?|file)://", url):
         raise HTTPException(status_code=400, detail="URL должен начинаться с http(s):// или file://")
     sink = resolve_sink_target(output) if output else None
+
+    # 1080p и выше под X не тянется (см. CLAUDE.md §7) — включается
+    # видеорежим: X останавливается, mpv играет напрямую в DRM (zero-copy),
+    # после конца X и киоск возвращаются сами.
+    if quality >= 1080:
+        set_display_off_flag(False)
+        kill_chrome_processes()
+        kill_mpv_processes()
+        spawn(f"/usr/local/bin/kiosk-video-drm.sh {shlex.quote(url)} {quality} {volume} "
+              f"{1 if loop else 0} {1 if shuffle else 0}")
+        return {
+            "message": f"Видеорежим DRM: {url}",
+            "media_type": "drm_fullscreen",
+            "quality": quality,
+            "note": "X остановлен на время ролика; киоск вернётся сам после конца",
+        }
+
     # Завершаем все текущие процессы воспроизведения
     kill_chrome_processes()
     kill_mpv_processes()
@@ -2541,8 +2558,6 @@ def play_media(
         # Для плейлистов и миксов YouTube
         media_type = "youtube_playlist" if is_youtube_playlist else "youtube_mix"
         mpv_params.append("--ytdl-raw-options=yes-playlist=")
-        if shuffle:
-            mpv_params.append("--shuffle")
         if loop:
             mpv_params.append("--loop-playlist=inf")
 
@@ -2560,6 +2575,22 @@ def play_media(
     set_display_off_flag(False)
     result = run_command(full_cmd)
 
+    # Перемешивание плейлиста. Флаг --shuffle здесь бесполезен: mpv применяет
+    # его ДО того, как yt-dlp развернёт плейлист из одной ссылки, и порядок
+    # оставался прямым. Поэтому ждём разворота и шлём playlist-shuffle по IPC,
+    # затем прыгаем на первый (уже случайный) элемент.
+    if shuffle and (is_youtube_playlist or is_youtube_mix):
+        spawn(
+            "for i in $(seq 1 60); do sleep 2; "
+            "c=$(echo '{\"command\":[\"get_property\",\"playlist-count\"]}'"
+            " | socat - /tmp/mpvsocket 2>/dev/null"
+            " | grep -o '\"data\":[0-9]*' | cut -d: -f2); "
+            "if [ \"${c:-0}\" -gt 1 ]; then "
+            "echo '{\"command\":[\"playlist-shuffle\"]}' | socat - /tmp/mpvsocket; "
+            "echo '{\"command\":[\"playlist-play-index\",0]}' | socat - /tmp/mpvsocket; "
+            "break; fi; done"
+        )
+
     return {
         "message": f"Запуск медиа: {url}",
         "media_type": media_type,
@@ -2571,7 +2602,7 @@ def play_media(
     }
 
 
-@app.get("/surface/immich/album")
+@app.get("/surface/immich/album", tags=["Контент и плеер"])
 def play_immich_album(
         ip: str = Query(..., description="IP-адрес сервера Immich"),
         api_key: str = Query(..., description="API ключ для доступа к Immich"),
@@ -2655,7 +2686,7 @@ def play_immich_album(
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
 
-@app.get("/surface/webcam")
+@app.get("/surface/webcam", tags=["Контент и плеер"])
 def show_webcam(
         url: str = Query("http://2.136.193.46:8081/cgi-bin/CGIProxy.fcgi", description="URL веб-камеры"),
         usr: str = Query("Cnb", description="Имя пользователя для веб-камеры"),
@@ -2705,7 +2736,7 @@ xset dpms 0 0 0
 xrandr --output {DISPLAY_OUTPUT} --auto
 nohup {CHROME_KIOSK_CMD} --app=file://{html_filename} \\
   --disable-web-security \\
-  --autoplay-policy=no-user-gesture-required > /tmp/chrome_webcam.log 2>&1 & disown"""
+  --autoplay-policy=no-user-gesture-required > /tmp/chrome_webcam.log 2>&1 &"""
 
         # Выполняем команду
         set_display_off_flag(False)
@@ -2965,7 +2996,7 @@ def clock_stop():
     return clock_pid() is None
 
 
-@app.get("/surface/clock-show")
+@app.get("/surface/clock-show", tags=["Часы"])
 async def show_clock():
     """Запускает отображение часов на экране"""
     ensure_not_quiet()
@@ -2974,7 +3005,7 @@ async def show_clock():
     raise HTTPException(status_code=500, detail="Часы не запустились, смотри /tmp/overlay_clock.log")
 
 
-@app.get("/surface/clock-hide")
+@app.get("/surface/clock-hide", tags=["Часы"])
 async def hide_clock():
     """Останавливает отображение часов"""
     stopped = clock_stop()
@@ -2984,14 +3015,57 @@ async def hide_clock():
     }
 
 
-@app.get("/surface/clock-status")
+CLOCK_SETTINGS_FILE = "/var/lib/kiosk/clock.json"
+CLOCK_DEFAULTS = {"position": "top-right", "scale": 100, "opacity": 55}
+CLOCK_POSITIONS = ("top-left", "top-right", "bottom-left", "bottom-right", "center")
+
+
+@app.get("/surface/clock-settings", tags=["Часы"])
+async def clock_settings():
+    """Настройки часов: позиция, размер (%), прозрачность подложки (%)"""
+    merged = dict(CLOCK_DEFAULTS)
+    try:
+        with open(CLOCK_SETTINGS_FILE) as f:
+            merged.update({k: v for k, v in json.load(f).items() if k in CLOCK_DEFAULTS})
+    except (OSError, ValueError):
+        pass
+    return merged
+
+
+@app.post("/surface/clock-settings", tags=["Часы"])
+async def clock_settings_update(update: Dict[str, Any]):
+    """Сохранить настройки часов; работающие часы подхватывают на лету"""
+    current = await clock_settings()
+    for key, value in update.items():
+        if key == "position":
+            if value not in CLOCK_POSITIONS:
+                raise HTTPException(status_code=400,
+                                    detail=f"position: {', '.join(CLOCK_POSITIONS)}")
+        elif key == "scale":
+            if not isinstance(value, (int, float)) or not 30 <= value <= 300:
+                raise HTTPException(status_code=400, detail="scale: 30-300")
+        elif key == "opacity":
+            if not isinstance(value, (int, float)) or not 0 <= value <= 100:
+                raise HTTPException(status_code=400, detail="opacity: 0-100")
+        else:
+            raise HTTPException(status_code=400, detail=f"Неизвестный ключ: {key}")
+    current.update(update)
+    try:
+        with open(CLOCK_SETTINGS_FILE, "w") as f:
+            json.dump(current, f)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось сохранить: {e}")
+    return {"message": "Сохранено", "settings": current}
+
+
+@app.get("/surface/clock-status", tags=["Часы"])
 async def clock_status():
     """Проверяет, запущены ли часы"""
     pid = clock_pid()
     return {"status": "running" if pid else "stopped", "pid": pid}
 
 
-@app.get("/surface/clock-toggle")
+@app.get("/surface/clock-toggle", tags=["Часы"])
 async def toggle_clock():
     """Переключает отображение часов (вкл/выкл)"""
     if clock_pid():

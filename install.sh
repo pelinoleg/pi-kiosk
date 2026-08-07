@@ -89,7 +89,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     python3 python3-venv python3-pip python3-pyqt5 python3-dev \
     mpv ffmpeg mpg123 pulseaudio alsa-utils espeak-ng \
     pulseaudio-module-bluetooth \
-    network-manager curl socat scrot bluez rfkill \
+    network-manager curl socat scrot bluez rfkill picom \
     >/dev/null || die "Package installation failed."
 # python3-pyqt5: часы (clock.py) рисуются системным python — PyQt5 не в venv.
 # scrot: эндпоинт /surface/screenshot. espeak-ng: офлайн-фоллбек tts-say.
@@ -148,6 +148,7 @@ sudo install -m 0755 "$SRC/scripts/kiosk-restore.sh" /usr/local/bin/kiosk-restor
 sudo install -m 0755 "$SRC/scripts/kiosk-display.sh" /usr/local/bin/kiosk-display.sh
 sudo install -m 0755 "$SRC/scripts/kiosk-output.sh"  /usr/local/bin/kiosk-output.sh
 sudo install -m 0755 "$SRC/scripts/airplay-watch.sh" /usr/local/bin/airplay-watch.sh
+sudo install -m 0755 "$SRC/scripts/kiosk-video-drm.sh" /usr/local/bin/kiosk-video-drm.sh
 
 # Output switching restarts surface-api, which needs root; grant exactly that.
 # Сначала визудо-проверка временного файла, потом установка: битый файл в

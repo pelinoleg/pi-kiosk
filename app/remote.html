@@ -338,6 +338,28 @@
     <button onclick="call('/surface/clock-toggle', 'Часы переключены')">Часы вкл/выкл</button>
     <button onclick="call('/surface/clock-status')">Статус часов</button>
   </div>
+  <div class="row" style="margin-top:8px;align-items:center">
+    <span class="muted">Угол</span>
+    <select id="clk-pos" class="inp" style="flex:1" onchange="clkSet('position', this.value)">
+      <option value="top-left">верх-лево</option>
+      <option value="top-right">верх-право</option>
+      <option value="bottom-left">низ-лево</option>
+      <option value="bottom-right">низ-право</option>
+      <option value="center">центр</option>
+    </select>
+  </div>
+  <div class="row" style="align-items:center">
+    <span class="muted">Размер</span>
+    <input type="range" id="clk-scale" min="30" max="300" step="10" style="flex:1"
+           onchange="clkSet('scale', parseInt(this.value))">
+    <span class="muted" id="clk-scale-val">100%</span>
+  </div>
+  <div class="row" style="align-items:center">
+    <span class="muted">Фон</span>
+    <input type="range" id="clk-op" min="0" max="100" step="5" style="flex:1"
+           onchange="clkSet('opacity', parseInt(this.value))">
+    <span class="muted" id="clk-op-val">55%</span>
+  </div>
 </div>
 
 <div class="card">
@@ -371,8 +393,11 @@
   <code class="help-line" data-url="/surface/tts-say?text=Buna dimineata&lang=ro&speed=0.8">…/surface/tts-say?text=…&lang=ro&speed=0.8&volume=80</code>
   <code class="help-line" data-url="/tts/google?text=Buna&speed=0.9">…/tts/google?text=… — старый путь с 3B тоже работает (нужен только новый хост)</code>
 
-  <h2 style="margin:10px 0 4px">Видео</h2>
-  <code class="help-line" data-url="/surface/play?url=&quality=720">…/surface/play?url=&lt;youtube или плейлист&gt;&quality=720&loop=true</code>
+  <h2 style="margin:10px 0 4px">Видео и плеер</h2>
+  <code class="help-line" data-url="/surface/play?url=&quality=720">…/surface/play?url=&lt;youtube или плейлист&gt;&quality=720&loop=true&shuffle=true</code>
+  <code class="help-line" data-url="/surface/play?url=&quality=1080">…/surface/play?…&quality=1080 — видеорежим DRM: киоск гаснет, ролик в полном качестве, после — всё само возвращается</code>
+  <code class="help-line" data-url="/surface/playback-next">…/surface/playback-next / playback-prev — следующий/предыдущий трек плейлиста</code>
+  <code class="help-line" data-url="/surface/playback-toggle">…/surface/playback-toggle — пауза/играть; playback-seek/30 — перемотка</code>
   <code class="help-line" data-url="/surface/kill-all">…/surface/kill-all — стоп; …/surface/restore — вернуть киоск</code>
 
   <h2 style="margin:10px 0 4px">Тишина и экран</h2>
@@ -562,6 +587,35 @@
 
   async function setBtKeepalive(v) {
     await call('/surface/bt-keepalive/' + v);
+  }
+
+  async function loadClock() {
+    try {
+      const s = await (await fetch('/surface/clock-settings')).json();
+      document.getElementById('clk-pos').value = s.position;
+      document.getElementById('clk-scale').value = s.scale;
+      document.getElementById('clk-scale-val').textContent = s.scale + '%';
+      document.getElementById('clk-op').value = s.opacity;
+      document.getElementById('clk-op-val').textContent = s.opacity + '%';
+    } catch (e) { /* дефолты и так стоят */ }
+  }
+
+  async function clkSet(key, value) {
+    document.getElementById('clk-scale-val').textContent =
+      document.getElementById('clk-scale').value + '%';
+    document.getElementById('clk-op-val').textContent =
+      document.getElementById('clk-op').value + '%';
+    try {
+      const r = await fetch('/surface/clock-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail || r.status);
+      toast('Часы: сохранено (применится за секунду)');
+    } catch (e) {
+      toast('Ошибка: ' + e.message, true);
+    }
   }
 
   async function btScan() {
@@ -866,6 +920,7 @@
   loadOutputs();
   loadTts();
   loadBt();
+  loadClock();
   renderPresets();
   setInterval(refreshStatus, 30000);
 </script>

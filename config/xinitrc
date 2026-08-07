@@ -18,4 +18,11 @@ done
 
 unclutter -idle 5 &
 
+# Композитор нужен часам поверх экрана: без него «полупрозрачный» фон
+# превращается в сплошной чёрный ящик. Фуллскрин-окна (браузер, видео) picom
+# не редиректит, так что на плавность они не жалуются.
+# Именно xrender: glx-бэкенд на vc4/glamor падает (GLX_BAD_FB_CONFIG), а
+# без явного бэкенда picom вообще отказывается стартовать.
+command -v picom >/dev/null && picom -b --backend xrender 2>/dev/null
+
 exec openbox-session
