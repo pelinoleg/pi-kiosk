@@ -257,7 +257,7 @@ curl "http://<ip>:7000/surface/chrome-tabs?urls=http://a/&urls=http://b/&times=6
 
 | Эндпоинт | Что делает |
 |---|---|
-| `GET /surface/play?url=...&volume=100&loop=true&fullscreen=true` | видео/поток через MPV; YouTube-ссылки понимает, одиночное видео превращает в «радио». YouTube живёт на `yt-dlp` из venv — `kiosk-pkg-update.timer` обновляет его еженедельно, иначе YouTube ломается за пару месяцев |
+| `GET /surface/play?url=...&volume=100&loop=true&quality=480` | видео/поток через MPV; YouTube-ссылки понимает, одиночное видео превращает в «радио». YouTube живёт на `yt-dlp` из venv — `kiosk-pkg-update.timer` обновляет его еженедельно. `quality` по умолчанию 480: аппаратного декодера в mpv нет, выше Pi 4 играет рывками |
 | `GET /surface/immich/album?ip=<nas>&api_key=<key>&album_id=<id>&limit=50&shuffle=true` | плейлист видео из альбома Immich через MPV |
 | `GET /surface/webcam` | публичная камера пляжа Бадалоны с температурой моря (дефолты); своя камера — параметрами `url`, `usr`, `pwd`, `refresh_rate`, `location`, `show_temp`, `weather_key`, `weather_query` |
 | `GET /surface/kill-all` | убрать с экрана всё: браузер и плеер |

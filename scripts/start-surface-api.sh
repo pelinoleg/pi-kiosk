@@ -28,4 +28,11 @@ xset s off 2>/dev/null
 xset s noblank 2>/dev/null
 xset dpms 0 0 0 2>/dev/null
 
+# Re-assert the audio output the user picked in the remote page: plugging an
+# HDMI screen in can steal the default sink, and nobody wants the sound to
+# quietly move to the monitor's speakers.
+if [ -s /var/lib/kiosk/audio_sink ]; then
+    pactl set-default-sink "$(cat /var/lib/kiosk/audio_sink)" 2>/dev/null || true
+fi
+
 exec python main.py

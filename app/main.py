@@ -970,16 +970,28 @@ async def system_volume_down():
         raise HTTPException(status_code=500, detail=f"Ошибка уменьшения громкости: {result['stderr']}")
 
 
+AUDIO_SINK_FILE = "/var/lib/kiosk/audio_sink"
+
+
 @app.get("/surface/set-audio-output/{sink_id}")
 async def set_audio_output(sink_id: str):
-    """Переключение аудио выхода"""
-    cmd = f"pactl set-default-sink {sink_id}"
-    result = run_command(cmd)
-
-    if result["success"]:
-        return {"sink_id": sink_id, "message": f"Аудио выход изменен на {sink_id}"}
-    else:
+    """Переключение аудио выхода; выбор запоминается и переживает перезагрузку"""
+    result = run_command(f"pactl set-default-sink {shlex.quote(sink_id)}")
+    if not result["success"]:
         raise HTTPException(status_code=500, detail=f"Ошибка изменения аудио выхода: {result['stderr']}")
+    # Уже играющие потоки сами не переезжают — перегнать их на новый выход.
+    run_command(
+        "pactl list short sink-inputs | cut -f1 | "
+        f"xargs -r -I{{}} pactl move-sink-input {{}} {shlex.quote(sink_id)}"
+    )
+    # Запомнить выбор: start-surface-api.sh применяет его при каждом старте,
+    # чтобы воткнутый позже HDMI не перетягивал звук на себя.
+    try:
+        with open(AUDIO_SINK_FILE, "w") as f:
+            f.write(sink_id + "\n")
+    except OSError as e:
+        logger.warning(f"Не удалось запомнить аудиовыход: {e}")
+    return {"sink_id": sink_id, "message": f"Аудио выход изменен на {sink_id}"}
 
 
 @app.get("/surface/toggle-mute")
@@ -1324,6 +1336,31 @@ async def remote_ui():
     return FileResponse(REMOTE_HTML_FILE, media_type="text/html")
 
 
+def _remote_asset(filename: str, media_type: str):
+    path = os.path.join(CURRENT_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"{filename} не найден")
+    return FileResponse(path, media_type=media_type)
+
+
+@app.get("/surface/remote-manifest.json")
+async def remote_manifest():
+    """PWA-манифест пульта"""
+    return _remote_asset("remote-manifest.json", "application/manifest+json")
+
+
+@app.get("/surface/remote-icon-192.png")
+async def remote_icon_192():
+    """Иконка пульта 192x192"""
+    return _remote_asset("remote-icon-192.png", "image/png")
+
+
+@app.get("/surface/remote-icon-512.png")
+async def remote_icon_512():
+    """Иконка пульта 512x512"""
+    return _remote_asset("remote-icon-512.png", "image/png")
+
+
 @app.post("/surface/custom-command")
 async def custom_command(command_req: CustomCommandRequest):
     """Выполнение произвольной команды"""
@@ -1367,6 +1404,9 @@ async def tts_say(
     офлайн-фоллбек espeak-ng: звучит роботом, но объявление донесёт.
     """
     ensure_not_quiet()
+    # Громкость поднимается только на время объявления и возвращается после:
+    # киоск не должен оставаться орущим из-за одного TTS.
+    prev_volume = get_current_volume()
     run_command(f"amixer -D pulse sset Master {volume}%")
     if notification and os.path.exists(NOTIFICATION_FILE):
         run_command(f"mpg123 -q {NOTIFICATION_FILE}")
@@ -1388,9 +1428,11 @@ async def tts_say(
         engine = "espeak-ng"
 
     player = "mpg123 -q" if audio_path.endswith(".mp3") else "paplay"
-    spawn(f"{player} {audio_path}; rm -f {audio_path}")
+    restore_volume = (f"; amixer -D pulse sset Master {prev_volume}% >/dev/null"
+                      if prev_volume is not None else "")
+    spawn(f"{player} {audio_path}{restore_volume}; rm -f {audio_path}")
     return {"message": "Произношу", "engine": engine, "text": text,
-            "volume": volume, "lang": lang}
+            "volume": volume, "restored_volume": prev_volume, "lang": lang}
 
 
 @app.post("/surface/tts-play-upload")
@@ -1408,6 +1450,7 @@ async def play_uploaded_audio(
     и задержкой между звуками
     """
     ensure_not_quiet()
+    prev_volume = get_current_volume()
     # Проверяем тип файла (опционально)
     content_type = audio_file.content_type
     if not content_type or not content_type.startswith("audio/"):
@@ -1487,8 +1530,10 @@ async def play_uploaded_audio(
             except (ValueError, TypeError):
                 logger.warning(f"Не удалось определить длительность аудио: {duration_result['stdout']}")
 
-        # Настраиваем автоматическое удаление временного файла после воспроизведения
-        cleanup_cmd = f"(sleep {(duration or 60) + 1} && rm -f {temp_path}) &"
+        # После воспроизведения вернуть громкость и удалить временный файл
+        restore_volume = (f"amixer -D pulse sset Master {prev_volume}% >/dev/null; "
+                          if prev_volume is not None else "")
+        cleanup_cmd = f"(sleep {(duration or 60) + 1} && {restore_volume}rm -f {temp_path}) &"
         run_command(cleanup_cmd)
 
         total_time = notification_duration + delay_after_notification + (duration or 0)
@@ -1721,7 +1766,10 @@ async def play_media(
         url: str = Query(..., description="URL медиа для воспроизведения"),
         volume: int = Query(100, ge=0, le=150, description="Громкость воспроизведения (0-150)"),
         loop: bool = Query(True, description="Повторять воспроизведение"),
-        fullscreen: bool = Query(True, description="Полноэкранный режим")
+        fullscreen: bool = Query(True, description="Полноэкранный режим"),
+        quality: int = Query(480, ge=144, le=2160,
+                             description="Потолок высоты видео для YouTube. 480 — потому что Pi 4 "
+                                         "декодит софтом: 720p он уже не вытягивает без рывков")
 ):
     """
     Универсальный эндпоинт для воспроизведения медиа через MPV.
@@ -1748,8 +1796,18 @@ async def play_media(
     mpv_params = [
         "--force-window=yes",
         "--input-ipc-server=/tmp/mpvsocket",
-        "--vo=x11",
+        # Именно gpu+x11egl: старый пин --vo=x11 масштабировал кадры
+        # процессором, и на 1080p-экране видео шло рывками (1800+ дропов за
+        # полминуты). Автовыбор тоже падал в x11 под systemd, так что контекст
+        # задан явно — проверено, на этой сборке он живой.
+        "--vo=gpu",
+        "--gpu-context=x11egl",
         "--hwdec=auto-safe",
+        # Без потолка yt-dlp берёт максимум (VP9/AV1 1080p+), и Pi декодит его
+        # софтом с диким тормозом. h264 до 720p Pi умеет аппаратно, а панель
+        # всё равно 800x480 — разницы в картинке нет, разница только в FPS.
+        f"--ytdl-format=\"bestvideo[height<={quality}][vcodec^=avc1]+bestaudio"
+        f"/best[height<={quality}]/best\"",
         f"--volume={volume}",
         "--network-timeout=30",
         "--demuxer-thread=yes",
@@ -2000,9 +2058,9 @@ def create_webcam_html(
     weather_div = f"""
         <div id="weather-info">
             <div class="location">{location}</div>
-            <div class="temp-label">Sea temperature:</div>
+            <div class="temp-label">Temperatura del mar:</div>
             <div class="temp-value" id="sea-temp">
-                <span class="loading">Loading...</span>
+                <span class="loading">Cargando…</span>
             </div>
         </div>
     """ if show_temp else ""
@@ -2141,7 +2199,7 @@ def create_webcam_html(
                 minute: '2-digit',
                 second: '2-digit'
             }};
-            document.getElementById('datetime').textContent = now.toLocaleDateString('ru-RU', options);
+            document.getElementById('datetime').textContent = now.toLocaleDateString('es-ES', options);
         }}
 
         // Обновляем время каждую секунду

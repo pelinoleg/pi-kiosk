@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Киоск — пульт</title>
+<link rel="manifest" href="/surface/remote-manifest.json">
+<link rel="icon" type="image/png" href="/surface/remote-icon-192.png">
+<link rel="apple-touch-icon" href="/surface/remote-icon-192.png">
+<meta name="theme-color" content="#101418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Киоск">
 <style>
   :root {
     --bg: #101418; --card: #1a2027; --line: #2a323c;
@@ -89,6 +96,7 @@
     padding: 12px; text-align: center; color: var(--dim); cursor: pointer;
     font-size: 14px; margin-bottom: 8px;
   }
+  #q-sched.disabled { opacity: .35; pointer-events: none; filter: grayscale(.6); }
 </style>
 </head>
 <body>
@@ -108,7 +116,7 @@
 
 <div class="card">
   <h2>Режим тишины
-    <label class="switch"><input type="checkbox" id="q-enabled" onchange="saveQuiet()"><span></span></label>
+    <label class="switch"><input type="checkbox" id="q-enabled" onchange="schedDim(); saveQuiet()"><span></span></label>
   </h2>
   <div class="muted" style="margin-bottom:10px">
     В тихое окно экран гаснет и ничто его не будит: AirPlay, запуски и
@@ -124,9 +132,11 @@
     даже вне расписания. «Вернуть экран сейчас» внутри ночного окна — пауза
     до конца окна: следующей ночью тишина вернётся сама.
   </div>
-  <div id="q-days"></div>
-  <div class="row" style="margin-top:8px">
-    <button class="primary wide" onclick="saveQuiet(true)">Сохранить расписание</button>
+  <div id="q-sched">
+    <div id="q-days"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="primary wide" onclick="saveQuiet(true)">Сохранить расписание</button>
+    </div>
   </div>
 </div>
 
@@ -151,6 +161,11 @@
 
 <div class="card">
   <h2>Звук</h2>
+  <div class="muted" style="margin-bottom:4px">Куда играть (запоминается):</div>
+  <select id="sinks" onchange="pickSink(this.value)"
+          style="width:100%;background:#0b0e12;border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:9px;font-size:14px;margin-bottom:10px">
+    <option>Загрузка…</option>
+  </select>
   <div class="muted" id="vol-label">Громкость: …</div>
   <input type="range" id="vol" min="0" max="150" step="5" onchange="setVolume(this.value)">
   <div class="row" style="margin-top:8px">
@@ -317,6 +332,24 @@
     refreshQuietBadge();
   }
 
+  async function loadSinks() {
+    try {
+      const data = await (await fetch('/surface/audio-outputs')).json();
+      const sel = document.getElementById('sinks');
+      sel.innerHTML = data.outputs.map(o =>
+        `<option value="${o.name}" ${o.active ? 'selected' : ''}>${o.description || o.name}</option>`
+      ).join('');
+    } catch (e) {
+      document.getElementById('sinks').innerHTML = '<option>недоступно</option>';
+    }
+  }
+
+  async function pickSink(name) {
+    await call('/surface/set-audio-output/' + encodeURIComponent(name),
+               'Звук идёт на: ' + name.split('.').pop());
+    loadSinks();
+  }
+
   async function setVolume(v) {
     document.getElementById('vol-label').textContent = 'Громкость: ' + v + '%';
     await call('/surface/system-volume/' + v, 'Громкость: ' + v + '%');
@@ -418,6 +451,11 @@
     </div>`;
   }
 
+  function schedDim() {
+    document.getElementById('q-sched').classList.toggle(
+      'disabled', !document.getElementById('q-enabled').checked);
+  }
+
   async function loadQuiet() {
     try {
       const q = await (await fetch('/surface/quiet-state')).json();
@@ -425,6 +463,7 @@
       document.getElementById('q-days').innerHTML =
         DAYS.map(([key, label]) => dayRow(key, label, q.days[key])).join('');
       showQuietBadge(q);
+      schedDim();
     } catch (e) {
       document.getElementById('q-days').innerHTML =
         '<div class="muted">Не удалось загрузить конфиг</div>';
@@ -482,6 +521,7 @@
 
   refreshStatus();
   loadQuiet();
+  loadSinks();
   setInterval(refreshStatus, 30000);
 </script>
 </body>
