@@ -35,6 +35,9 @@ cleanup() {
     log "returning the screen to X and the kiosk"
     sudo systemctl start xinit.service 2>/dev/null
     sleep 4
+    # AirPlay привязан к X (uxplay рисует в него): остановка xinit валит его
+    # штатно, а обратный start зависимые юниты сам не поднимает.
+    sudo systemctl start airplay-video.service airplay-audio.service 2>/dev/null
     # kiosk-output вернёт правильную подсветку панели, если её гасили мы
     /usr/local/bin/kiosk-output.sh 2>/dev/null || true
     sudo systemctl restart --no-block kiosk-restore.service 2>/dev/null
