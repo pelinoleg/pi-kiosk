@@ -2286,7 +2286,10 @@ async def chrome_tabs_slideshow(
     # Создаем список URL с временем отображения
     tabs = []
     for i in range(min(len(urls), len(times))):
-        current_url = urls[i]
+        # Пробелы и переносы строк внутри URL — всегда мусор от копирования
+        # через чаты и шорткаты (реальный пробел был бы %20). Вычищаем молча:
+        # одна такая вкладка иначе превращается в чёрный экран.
+        current_url = re.sub(r"\s+", "", urls[i])
 
         # Добавляем https:// если не указан протокол
         if not current_url.startswith(("http://", "https://")):
