@@ -1400,6 +1400,12 @@ async def remote_icon_192():
     return _remote_asset("remote-icon-192.png", "image/png")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Иконка вкладки для всех страниц API (в т.ч. /docs)"""
+    return _remote_asset("remote-icon-192.png", "image/png")
+
+
 @app.get("/surface/remote-icon-512.png")
 async def remote_icon_512():
     """Иконка пульта 512x512"""

@@ -10,7 +10,9 @@ User=root
 WorkingDirectory=__INSTALL_DIR__/remote
 Environment="REMOTE_PORT=5050"
 EnvironmentFile=-/etc/kiosk/kiosk.env
-ExecStart=__INSTALL_DIR__/.venv/bin/python remote.py
+# -u: без буферизации stdout, иначе «Grabbed keyboard» не доходит до журнала
+# (грабли CLAUDE.md §6.8 про uxplay, но в python-исполнении)
+ExecStart=__INSTALL_DIR__/.venv/bin/python -u remote.py
 Restart=always
 # The listener exits when the dongle is not plugged into this box; a slow
 # retry keeps journal noise down and still picks the dongle up within 30s.
