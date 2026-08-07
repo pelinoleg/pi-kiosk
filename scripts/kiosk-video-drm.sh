@@ -35,6 +35,8 @@ cleanup() {
     log "returning the screen to X and the kiosk"
     sudo systemctl start xinit.service 2>/dev/null
     sleep 4
+    # kiosk-output вернёт правильную подсветку панели, если её гасили мы
+    /usr/local/bin/kiosk-output.sh 2>/dev/null || true
     sudo systemctl restart --no-block kiosk-restore.service 2>/dev/null
 }
 trap cleanup EXIT
@@ -67,13 +69,14 @@ esac
 
 ARGS=(
     --vo=gpu --gpu-context=drm
-    # Аппаратный h264-декодер: в DRM он реально разгружает CPU (в X11 его
-    # съедали копии кадров). 60fps-исходники на 1080p всё равно не тянутся —
-    # лесенка: 1080p до 30fps, иначе честные 720p.
-    --vd=lavc:h264_v4l2m2m,h264
     --fullscreen
     --input-ipc-server=/tmp/mpvsocket
-    "--ytdl-format=bestvideo[height<=${QUALITY}][fps<=30][vcodec^=avc1]+bestaudio/bestvideo[height<=720][vcodec^=avc1]+bestaudio/best[height<=720]/best"
+    # Лесенка качества (замерено на живых роликах 2026-08-07):
+    #  1) h264 >=720p до 30fps — гладко всегда (hw-декодер);
+    #  2) AV1 до 720p — для HDR-роликов, у которых h264 обрывается на 480p:
+    #     dav1d на 4 ядрах тянет 720p60 приемлемо (1080p60 — уже ~18 дроп/с);
+    #  3) любой h264 до 720p; 4) что осталось.
+    "--ytdl-format=bestvideo[height>=720][height<=${QUALITY}][fps<=30][vcodec^=avc1]+bestaudio/bestvideo[height>=600][height<=720][vcodec^=av01]+bestaudio/bestvideo[height<=720][vcodec^=avc1]+bestaudio/best[height<=720]/best"
     "--volume=${VOLUME}"
     # Не глушить вывод: с --really-quiet любая смерть mpv оставляла пустой
     # лог и никакой диагностики.
@@ -81,6 +84,13 @@ ARGS=(
     --network-timeout=30 --cache=yes --cache-secs=30
 )
 [ -n "$DRM_CONN" ] && ARGS+=("--drm-connector=${DRM_CONN}")
+# Когда видео идёт на HDMI, мини-панель светилась остатками фреймбуфера —
+# гасим её подсветку на время ролика (kiosk-output вернёт после).
+case "$DRM_CONN" in HDMI*)
+    for bl in /sys/class/backlight/*/bl_power; do
+        [ -w "$bl" ] && echo 4 > "$bl" 2>/dev/null
+    done ;;
+esac
 case "$URL" in
     *list=*) ARGS+=(--ytdl-raw-options=yes-playlist=) ;;
 esac
