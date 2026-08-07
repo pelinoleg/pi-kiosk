@@ -45,6 +45,16 @@ for o in $connected; do
 done
 [ -n "$want" ] || want=$(printf '%s\n' "$connected" | head -1)
 
+# Manual pick from the remote page beats the automatic choice - a powered-off
+# monitor keeps HPD asserted, so both kernel and X still call it "connected"
+# and the automatics honestly cannot know it went dark.
+override=$(cat /var/lib/kiosk/output_override 2>/dev/null)
+if [ -n "$override" ] && [ "$override" != auto ]; then
+    for o in $connected; do
+        [ "$o" = "$override" ] && { want="$o"; break; }
+    done
+fi
+
 previous=$(cat "$STATE" 2>/dev/null || echo "")
 
 # Bring up the chosen output, and only then drop the others: turning everything

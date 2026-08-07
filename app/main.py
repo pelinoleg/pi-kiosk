@@ -1320,6 +1320,51 @@ async def tail_logs(lines: int = Query(50, ge=1, le=1000)):
     return {"file": KIOSK_LOG_FILE, "lines": result["stdout"].splitlines()}
 
 
+OUTPUT_OVERRIDE_FILE = "/var/lib/kiosk/output_override"
+
+
+def _connected_outputs():
+    result = run_command("DISPLAY=:0 xrandr --query | grep ' connected'")
+    return [line.split()[0] for line in result["stdout"].splitlines() if line.strip()]
+
+
+@app.get("/surface/output-state")
+async def output_state():
+    """Видеовыходы: какие подключены, какой активен, есть ли ручной выбор"""
+    def read(path):
+        try:
+            return open(path).read().strip() or None
+        except OSError:
+            return None
+    return {
+        "connected": _connected_outputs(),
+        "active": read("/var/lib/kiosk/active_output"),
+        "override": read(OUTPUT_OVERRIDE_FILE) or "auto",
+    }
+
+
+@app.get("/surface/output-set/{output}")
+async def output_set(output: str):
+    """Выбор экрана: имя выхода (HDMI-2, DSI-1, ...) или auto.
+
+    Нужен для выключенного, но воткнутого монитора: он держит линию HPD,
+    система считает его подключённым, и автоматика честно выбирает его.
+    """
+    connected = _connected_outputs()
+    if output != "auto" and output not in connected:
+        raise HTTPException(status_code=400,
+                            detail=f"Выход {output} не подключён. Есть: {', '.join(connected)} и auto")
+    try:
+        with open(OUTPUT_OVERRIDE_FILE, "w") as f:
+            f.write("" if output == "auto" else output + "\n")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось сохранить выбор: {e}")
+    # Применить сразу, не дожидаясь таймера. Скрипт может перезапустить этот
+    # же API (смена выхода) — поэтому в фоне, чтобы успеть ответить.
+    spawn("/usr/local/bin/kiosk-output.sh")
+    return {"message": f"Экран: {output}", "override": output, "connected": connected}
+
+
 @app.get("/surface/restore")
 async def restore_screen():
     """Вернуть на экран то, что киоск должен показывать (kiosk-restore)"""

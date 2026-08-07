@@ -142,6 +142,8 @@
 
 <div class="card">
   <h2>Экран</h2>
+  <div class="muted" style="margin-bottom:4px">Какой экран использовать:</div>
+  <div class="row" id="outputs" style="margin-bottom:10px"></div>
   <div class="row">
     <button class="primary wide" onclick="call('/surface/restore', 'Возвращаю киоск…')">Вернуть киоск</button>
     <button onclick="call('/surface/display-on', 'Экран включён')">Экран вкл</button>
@@ -331,6 +333,25 @@
       document.getElementById('vol-label').textContent = 'Громкость: ' + v.volume + '%';
     } catch (e) { /* звук не критичен для статуса */ }
     refreshQuietBadge();
+  }
+
+  async function loadOutputs() {
+    try {
+      const o = await (await fetch('/surface/output-state')).json();
+      const options = ['auto', ...o.connected];
+      const label = n => n === 'auto' ? 'Авто'
+                   : n.startsWith('DSI') ? 'Панель' : n;
+      document.getElementById('outputs').innerHTML = options.map(n =>
+        `<button class="third ${o.override === n ? 'primary' : ''}"
+                 onclick="pickOutput('${n}')">${label(n)}${o.active === n ? ' •' : ''}</button>`
+      ).join('');
+    } catch (e) { /* карточка не критична */ }
+  }
+
+  async function pickOutput(name) {
+    await call('/surface/output-set/' + encodeURIComponent(name),
+               name === 'auto' ? 'Выбор экрана: авто' : 'Переключаю на ' + name);
+    setTimeout(loadOutputs, 2500);
   }
 
   async function loadSinks() {
@@ -523,6 +544,7 @@
   refreshStatus();
   loadQuiet();
   loadSinks();
+  loadOutputs();
   setInterval(refreshStatus, 30000);
 </script>
 </body>
