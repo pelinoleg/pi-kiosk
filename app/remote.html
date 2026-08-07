@@ -225,6 +225,19 @@
     <div class="muted" style="margin-top:4px">
       Перед поиском переведи колонку в режим сопряжения.
     </div>
+    <div class="row" style="margin-top:8px;align-items:center">
+      <span class="muted">Не давать колонке уснуть:</span>
+      <select id="bt-ka" class="inp" style="flex:1" onchange="setBtKeepalive(this.value)">
+        <option value="0">выключено</option>
+        <option value="120">каждые 2 мин</option>
+        <option value="240">каждые 4 мин</option>
+        <option value="600">каждые 10 мин</option>
+      </select>
+    </div>
+    <div class="muted" style="margin-top:4px">
+      Полсекунды цифровой тишины — колонка считает, что играет музыка,
+      и не выключается. В режиме тишины пинги не идут.
+    </div>
   </div>
 </div>
 
@@ -484,6 +497,15 @@
     } catch (e) {
       document.getElementById('bt-list').textContent = 'Bluetooth недоступен';
     }
+    try {
+      const ka = await (await fetch('/surface/bt-keepalive')).json();
+      const sel = document.getElementById('bt-ka');
+      if ([...sel.options].some(o => o.value == ka.seconds)) sel.value = ka.seconds;
+    } catch (e) { /* настройка не критична */ }
+  }
+
+  async function setBtKeepalive(v) {
+    await call('/surface/bt-keepalive/' + v);
   }
 
   async function btScan() {

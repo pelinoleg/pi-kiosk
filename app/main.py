@@ -1112,8 +1112,15 @@ async def bt_forget(mac: str):
 # выход — Bluetooth, киоск раз в несколько минут проигрывает в него полсекунды
 # цифровой тишины: для колонки это активный поток, и она не отключается.
 # В тихое окно пинги не идут — ночью колонке положено спать.
-BT_KEEPALIVE_SECONDS = int(os.environ.get("BT_KEEPALIVE_SECONDS", "240"))
+BT_KEEPALIVE_FILE = "/var/lib/kiosk/bt_keepalive"
 _SILENCE_WAV = "/var/lib/kiosk/silence.wav"
+
+
+def get_bt_keepalive_seconds() -> int:
+    try:
+        return int(open(BT_KEEPALIVE_FILE).read().strip())
+    except (OSError, ValueError):
+        return int(os.environ.get("BT_KEEPALIVE_SECONDS", "240"))
 
 
 def _bt_keepalive():
@@ -1123,22 +1130,49 @@ def _bt_keepalive():
                         f"-t 0.5 {_SILENCE_WAV}")
     except Exception:
         pass
+    last_ping = 0.0
     while True:
-        time.sleep(max(BT_KEEPALIVE_SECONDS, 60))
+        time.sleep(30)
         try:
-            if quiet_now():
+            interval = get_bt_keepalive_seconds()
+            if interval <= 0 or quiet_now():
+                continue
+            if time.time() - last_ping < interval:
                 continue
             sink = run_command("pactl get-default-sink")["stdout"].strip()
             if sink.startswith("bluez") and os.path.exists(_SILENCE_WAV):
                 run_command(f"timeout 10 paplay --device={shlex.quote(sink)} {_SILENCE_WAV}")
+                last_ping = time.time()
         except Exception as e:
             logger.warning(f"BT keep-alive: {e}")
 
 
 @app.on_event("startup")
 async def _start_bt_keepalive():
-    if BT_KEEPALIVE_SECONDS > 0:
-        threading.Thread(target=_bt_keepalive, daemon=True).start()
+    threading.Thread(target=_bt_keepalive, daemon=True).start()
+
+
+@app.get("/surface/bt-keepalive")
+async def bt_keepalive_state():
+    """Настройка «не давать колонке уснуть»: интервал пингов тишиной"""
+    sink = run_command("pactl get-default-sink")["stdout"].strip()
+    return {"seconds": get_bt_keepalive_seconds(),
+            "relevant": sink.startswith("bluez")}
+
+
+@app.get("/surface/bt-keepalive/{seconds}")
+async def bt_keepalive_set(seconds: int):
+    """Задать интервал пингов (0 — выключить); применяется на лету"""
+    if not 0 <= seconds <= 3600:
+        raise HTTPException(status_code=400, detail="Интервал: 0-3600 секунд")
+    try:
+        with open(BT_KEEPALIVE_FILE, "w") as f:
+            f.write(f"{seconds}\n")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось сохранить: {e}")
+    return {"message": ("Пинги выключены" if seconds == 0
+                        else f"Колонку будим каждые {seconds} секунд"),
+            "seconds": seconds}
 
 
 @app.get("/surface/toggle-mute")
