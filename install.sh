@@ -149,6 +149,11 @@ sudo install -m 0755 "$SRC/scripts/kiosk-display.sh" /usr/local/bin/kiosk-displa
 sudo install -m 0755 "$SRC/scripts/kiosk-output.sh"  /usr/local/bin/kiosk-output.sh
 sudo install -m 0755 "$SRC/scripts/airplay-watch.sh" /usr/local/bin/airplay-watch.sh
 sudo install -m 0755 "$SRC/scripts/kiosk-video-drm.sh" /usr/local/bin/kiosk-video-drm.sh
+# Заставка для передачи экрана в видеорежим (вместо консоли с логином)
+if [ -f "$SRC/assets/splash.jpg" ]; then
+    sudo mkdir -p /usr/local/share/kiosk
+    sudo install -m 0644 "$SRC/assets/splash.jpg" /usr/local/share/kiosk/splash.jpg
+fi
 
 # Output switching restarts surface-api, which needs root; grant exactly that.
 # Сначала визудо-проверка временного файла, потом установка: битый файл в

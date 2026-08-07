@@ -43,9 +43,16 @@ log "DRM video mode: quality<=${QUALITY} url=${URL}"
 sudo systemctl stop xinit.service
 sleep 1
 # Пока yt-dlp разбирает ссылку, на экране была бы голая консоль с логином и
-# IP — заливаем фреймбуфер чёрным (пользователь в группе video, sudo не нужен).
+# IP — рисуем заставку (или хотя бы чёрный) прямо во фреймбуфер; пользователь
+# в группе video, sudo не нужен.
+SPLASH=/usr/local/share/kiosk/splash.jpg
 for fb in /dev/fb*; do
-    [ -w "$fb" ] && dd if=/dev/zero of="$fb" bs=1M count=32 2>/dev/null
+    [ -w "$fb" ] || continue
+    if [ -f "$SPLASH" ] && command -v ffmpeg >/dev/null; then
+        ffmpeg -loglevel error -i "$SPLASH" -pix_fmt rgb565le -f fbdev "$fb" 2>/dev/null \
+            && continue
+    fi
+    dd if=/dev/zero of="$fb" bs=1M count=32 2>/dev/null
 done || true
 
 ARGS=(
