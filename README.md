@@ -295,6 +295,9 @@ curl "http://<ip>:7000/surface/chrome-tabs?urls=http://a/&urls=http://b/&times=6
 | `GET /surface/bt-devices` | известные BT-устройства и их состояние |
 | `GET /surface/bt-connect/{mac}` | подключить колонку и сразу перевести звук на неё |
 | `GET /surface/bt-disconnect/{mac}` / `bt-forget/{mac}` | отключить / забыть |
+| `GET /surface/bt-keepalive` / `bt-keepalive/{сек}` | пинги тишиной, чтобы колонка не засыпала (0 — выкл; настройка есть на странице) |
+| `GET /surface/audio-to/{bt\|usb\|hdmi\|jack}` | перевести звук по короткому имени; спящую знакомую BT-колонку разбудит сам |
+| `GET /surface/output-state` / `output-set/{выход\|auto}` | какие экраны подключены / выбрать экран вручную |
 | `GET /surface/tts-say?text=...&lang=ro` | **произнести текст**. Цепочка: Google Cloud TTS (голоса Wavenet/Chirp3-HD, ключ в `kiosk.env`) → gTTS → espeak-ng (офлайн). Параметры: `engine`, `voice`, `volume`, `notification`, `slow`. Озвучки кешируются — повторы мгновенны и бесплатны |
 | `GET /surface/tts-voices` | доступные голоса по языкам + текущие настройки |
 | `POST /surface/tts-settings` | настройки TTS: голос на язык, скорость, тон, громкости, сигнал |
