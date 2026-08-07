@@ -2452,9 +2452,9 @@ def play_media(
         volume: int = Query(100, ge=0, le=150, description="Громкость воспроизведения (0-150)"),
         loop: bool = Query(True, description="Повторять воспроизведение"),
         fullscreen: bool = Query(True, description="Полноэкранный режим"),
-        quality: int = Query(720, ge=144, le=2160,
-                             description="Потолок высоты видео для YouTube. 720 — максимум, который "
-                                         "Pi 4 декодит без рывков (софтом; 1080p — ~40 дропов/с)"),
+        quality: int = Query(1080, ge=144, le=2160,
+                             description="1080 (дефолт) — видеорежим DRM: X отдаёт экран mpv, "
+                                         "максимум качества. 720 и ниже — обычный режим в X"),
         output: str = Query(None, description="Куда играть звук: bt, usb, hdmi, jack или имя выхода"),
         shuffle: bool = Query(True, description="Перемешивать плейлист (на одиночное видео не влияет)")
 ):

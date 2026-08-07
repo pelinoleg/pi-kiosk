@@ -42,6 +42,11 @@ trap cleanup EXIT
 log "DRM video mode: quality<=${QUALITY} url=${URL}"
 sudo systemctl stop xinit.service
 sleep 1
+# Пока yt-dlp разбирает ссылку, на экране была бы голая консоль с логином и
+# IP — заливаем фреймбуфер чёрным (пользователь в группе video, sudo не нужен).
+for fb in /dev/fb*; do
+    [ -w "$fb" ] && dd if=/dev/zero of="$fb" bs=1M count=32 2>/dev/null
+done || true
 
 ARGS=(
     --vo=gpu --gpu-context=drm

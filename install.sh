@@ -267,6 +267,10 @@ for src in "$SRC"/systemd/*.service "$SRC"/systemd/*.timer; do
     [ -s "/etc/systemd/system/$u" ] || die "Unit $u came out empty. Disk full, or the box died mid-write."
 done
 
+# Логин-приглашение на экране киоску ни к чему: при передаче экрана из X в
+# DRM-видеорежим на секунды вылезала консоль с IP и getty. SSH остаётся.
+sudo systemctl disable getty@tty1.service >/dev/null 2>&1 || true
+
 # journald на Pi часто живёт в tmpfs (log2ram, 128М): лимит журнала обязан
 # быть заметно меньше раздела, иначе журнал съедает всё, а скрипты киоска
 # получают ENOSPC и молча ломаются — ровно сценарий «улики стёрты» из §6.4.
