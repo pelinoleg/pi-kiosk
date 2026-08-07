@@ -290,14 +290,21 @@ curl "http://<ip>:7000/surface/chrome-tabs?urls=http://a/&urls=http://b/&times=6
 | `GET /surface/toggle-mute` | вкл/выкл звук |
 | `GET /surface/audio-outputs` | список аудиовыходов |
 | `GET /surface/set-audio-output/{sink}` | переключить аудиовыход |
-| `GET /surface/tts-say?text=...&volume=90&lang=ru` | **произнести напечатанный текст**: голос Google (gTTS), офлайн-фоллбек espeak-ng |
-| `POST /surface/tts-play-upload` | проиграть загруженный аудиофайл (multipart: `audio_file`, опционально `main_volume`, `play_notification`, `notification_volume`, `delay_after_notification`) — для голосовых уведомлений из n8n |
+| `GET /surface/tts-say?text=...&lang=ro` | **произнести текст**. Цепочка: Google Cloud TTS (голоса Wavenet/Chirp3-HD, ключ в `kiosk.env`) → gTTS → espeak-ng (офлайн). Параметры: `engine`, `voice`, `volume`, `notification`, `slow`. Озвучки кешируются — повторы мгновенны и бесплатны |
+| `GET /surface/tts-voices` | доступные голоса по языкам + текущие настройки |
+| `POST /surface/tts-settings` | настройки TTS: голос на язык, скорость, тон, громкости, сигнал |
+| `POST /surface/tts-play-upload` | проиграть загруженный аудиофайл (multipart: `audio_file`, опционально `main_volume`, `play_notification`, `notification_volume`, `delay_after_notification`) |
 
 ```bash
-curl -G "http://<ip>:7000/surface/tts-say" --data-urlencode "text=Обед готов"
+curl -G "http://<ip>:7000/surface/tts-say" --data-urlencode "text=Masa este gata" --data-urlencode "lang=ro"
 curl -F "audio_file=@speech.mp3" -F "main_volume=90" \
   "http://<ip>:7000/surface/tts-play-upload"
 ```
+
+Громкость поднимается только на время объявления и возвращается сама. Для
+HD-голосов нужен ключ Google Cloud TTS в `/etc/kiosk/kiosk.env`
+(`GOOGLE_TTS_API_KEY`); без ключа — обычный голос gTTS, без интернета —
+espeak-ng. `OPENAI_API_KEY` включает `engine=openai`.
 
 ### Плеер (MPV)
 

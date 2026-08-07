@@ -18,6 +18,8 @@ import requests
 import tempfile
 import threading
 import shlex
+import hashlib
+import base64
 
 
 def _detect_display_output() -> str:
@@ -1386,12 +1388,6 @@ def _remote_asset(filename: str, media_type: str):
     return FileResponse(path, media_type=media_type)
 
 
-@app.get("/surface/tts")
-async def tts_ui():
-    """Страница TTS: текст, язык, скорость, быстрые фразы"""
-    return _remote_asset("tts.html", "text/html")
-
-
 @app.get("/surface/remote-manifest.json")
 async def remote_manifest():
     """PWA-манифест пульта"""
@@ -1440,50 +1436,256 @@ async def custom_command_get(command: str = Query(...)):
     }
 
 
+########################
+# TTS — перенесённый с 3B сервис: Google Cloud TTS + OpenAI, кеш, настройки
+########################
+
+# Ключи живут в /etc/kiosk/kiosk.env, репозиторий публичный — сюда их не класть.
+GOOGLE_TTS_API_KEY = os.environ.get("GOOGLE_TTS_API_KEY", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+GOOGLE_TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize"
+OPENAI_TTS_URL = "https://api.openai.com/v1/audio/speech"
+OPENAI_TTS_MODEL = "tts-1"
+TTS_SETTINGS_FILE = "/var/lib/kiosk/tts.json"
+TTS_CACHE_DIR = "/var/lib/kiosk/tts-cache"
+TTS_CACHE_MAX_FILES = 400
+TTS_VOICES_FILE = os.path.join(CURRENT_DIR, "tts-voices.json")
+
+TTS_DEFAULTS = {
+    "volume": 55, "notification_enabled": True, "notification_volume": 60,
+    "pause_duration": 0.5,
+    "google_voice_ro": "ro-RO-Wavenet-B",
+    "google_voice_es": "es-ES-Chirp3-HD-Achird",
+    "google_speed": 1, "google_pitch": 0, "google_gain": 0,
+    "openai_voice": "alloy", "openai_speed": 1,
+}
+
+
+def load_tts_settings() -> dict:
+    merged = dict(TTS_DEFAULTS)
+    try:
+        with open(TTS_SETTINGS_FILE) as f:
+            stored = json.load(f)
+        merged.update({k: v for k, v in stored.items() if k in TTS_DEFAULTS})
+    except (OSError, ValueError):
+        pass
+    return merged
+
+
+def save_tts_settings(settings: dict):
+    with open(TTS_SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+
+
+def tts_cache_key(provider: str, text: str, voice: str, speed, pitch=0, gain=0) -> str:
+    # Схема один в один со старым сервисом на 3B — его кеш скопирован сюда,
+    # и старые озвучки продолжают находиться.
+    raw = f"{provider}:{voice}:{speed}:{pitch}:{gain}:{text}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def tts_cache_get(key: str):
+    path = os.path.join(TTS_CACHE_DIR, f"{key}.mp3")
+    return path if os.path.exists(path) else None
+
+
+def tts_cache_put(key: str, audio: bytes) -> str:
+    os.makedirs(TTS_CACHE_DIR, exist_ok=True)
+    path = os.path.join(TTS_CACHE_DIR, f"{key}.mp3")
+    with open(path, "wb") as f:
+        f.write(audio)
+    try:
+        entries = sorted(pathlib.Path(TTS_CACHE_DIR).glob("*.mp3"), key=os.path.getmtime)
+        for stale in entries[:-TTS_CACHE_MAX_FILES]:
+            stale.unlink()
+    except OSError:
+        pass
+    return path
+
+
+def google_tts_synth(text: str, lang: str, voice, settings: dict):
+    """Google Cloud TTS → (путь к mp3, из_кеша). Бросает исключение при отказе."""
+    if not GOOGLE_TTS_API_KEY:
+        raise RuntimeError("GOOGLE_TTS_API_KEY не задан в /etc/kiosk/kiosk.env")
+    voice = voice or settings.get(f"google_voice_{lang}")
+    if not voice:
+        raise RuntimeError(f"для языка {lang} не настроен голос Google")
+    speed = settings["google_speed"]
+    # Chirp-голоса не принимают pitch и gain
+    pitch = 0 if "Chirp" in voice else settings["google_pitch"]
+    gain = 0 if "Chirp" in voice else settings["google_gain"]
+
+    key = tts_cache_key("google", text, voice, speed, pitch, gain)
+    cached = tts_cache_get(key)
+    if cached:
+        return cached, True
+
+    audio_config = {"audioEncoding": "MP3", "speakingRate": speed}
+    if "Chirp" not in voice:
+        audio_config["pitch"] = pitch
+        audio_config["volumeGainDb"] = gain
+    response = requests.post(
+        f"{GOOGLE_TTS_URL}?key={GOOGLE_TTS_API_KEY}",
+        json={
+            "input": {"text": text},
+            "voice": {"languageCode": voice[:5], "name": voice},
+            "audioConfig": audio_config,
+        },
+        timeout=20,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Google TTS: HTTP {response.status_code} {response.text[:200]}")
+    audio = base64.b64decode(response.json()["audioContent"])
+    return tts_cache_put(key, audio), False
+
+
+def openai_tts_synth(text: str, settings: dict, voice=None):
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY не задан в /etc/kiosk/kiosk.env")
+    voice = voice or settings["openai_voice"]
+    speed = settings["openai_speed"]
+    key = tts_cache_key("openai", text, voice, speed)
+    cached = tts_cache_get(key)
+    if cached:
+        return cached, True
+    response = requests.post(
+        OPENAI_TTS_URL,
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+        json={"model": OPENAI_TTS_MODEL, "voice": voice, "input": text, "speed": speed},
+        timeout=30,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"OpenAI TTS: HTTP {response.status_code} {response.text[:200]}")
+    return tts_cache_put(key, response.content), False
+
+
+def gtts_synth(text: str, lang: str, slow: bool):
+    from gtts import gTTS
+    key = tts_cache_key("gtts", text, f"{lang}{'-slow' if slow else ''}", 1)
+    cached = tts_cache_get(key)
+    if cached:
+        return cached, True
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        gTTS(text=text, lang=lang, slow=slow).save(tmp.name)
+        with open(tmp.name, "rb") as f:
+            audio = f.read()
+    os.unlink(tmp.name)
+    return tts_cache_put(key, audio), False
+
+
+def espeak_synth(text: str, lang: str, slow: bool):
+    path = f"/tmp/tts_espeak_{int(time.time())}.wav"
+    speed = 110 if slow else 145
+    result = run_command(f"espeak-ng -v {lang} -s {speed} -w {path} {shlex.quote(text)}")
+    if not result["success"]:
+        raise RuntimeError(f"espeak-ng: {result['stderr'].strip()}")
+    return path, False
+
+
+def play_announcement(path: str, volume: int, notification: bool,
+                      notification_volume: int, pause: float, keep: bool = True):
+    """Сигнал → пауза → речь, всё в фоне; громкость возвращается после."""
+    prev = get_current_volume()
+    steps = []
+    if notification and os.path.exists(NOTIFICATION_FILE):
+        steps.append(f"amixer -D pulse sset Master {notification_volume}% >/dev/null")
+        steps.append(f"mpg123 -q {NOTIFICATION_FILE}")
+        if pause > 0:
+            steps.append(f"sleep {pause}")
+    steps.append(f"amixer -D pulse sset Master {volume}% >/dev/null")
+    player = "mpg123 -q" if path.endswith(".mp3") else "paplay"
+    steps.append(f"{player} {shlex.quote(path)}")
+    if prev is not None:
+        steps.append(f"amixer -D pulse sset Master {prev}% >/dev/null")
+    if not keep:
+        steps.append(f"rm -f {shlex.quote(path)}")
+    spawn("; ".join(steps))
+    return prev
+
+
 @app.get("/surface/tts-say")
 async def tts_say(
-        text: str = Query(..., min_length=1, max_length=500, description="Текст для озвучки"),
-        volume: int = Query(90, ge=0, le=150, description="Громкость воспроизведения"),
-        lang: str = Query("ro", description="Язык (ro, ru, en, es, ...)"),
-        notification: bool = Query(True, description="Сигнал перед речью"),
-        slow: bool = Query(False, description="Медленная, разборчивая речь"),
+        text: str = Query(..., min_length=1, max_length=1000, description="Текст для озвучки"),
+        lang: str = Query("ro", description="Язык (ro, es, ru, en, ...)"),
+        engine: str = Query("auto", description="auto | google | openai | gtts | espeak"),
+        voice: str = Query(None, description="Голос (для google/openai), иначе из настроек"),
+        volume: int = Query(None, ge=0, le=150, description="Громкость речи, иначе из настроек"),
+        notification: bool = Query(None, description="Сигнал перед речью, иначе из настроек"),
+        slow: bool = Query(False, description="Медленная речь (gtts/espeak)"),
 ):
-    """Произнести напечатанный текст на киоске.
+    """Произнести текст на киоске.
 
-    Синтез — gTTS (голос Google, нужен интернет); если он недоступен,
-    офлайн-фоллбек espeak-ng: звучит роботом, но объявление донесёт.
+    Цепочка auto: Google Cloud TTS (голоса Wavenet/Chirp3-HD, ключ в
+    kiosk.env) → gTTS (обычный голос Google, без ключа) → espeak-ng (офлайн).
+    Синтез кешируется — повторные фразы играют мгновенно и бесплатно.
     """
     ensure_not_quiet()
-    # Громкость поднимается только на время объявления и возвращается после:
-    # киоск не должен оставаться орущим из-за одного TTS.
-    prev_volume = get_current_volume()
-    run_command(f"amixer -D pulse sset Master {volume}%")
-    if notification and os.path.exists(NOTIFICATION_FILE):
-        run_command(f"mpg123 -q {NOTIFICATION_FILE}")
+    settings = load_tts_settings()
+    volume = settings["volume"] if volume is None else volume
+    notification = settings["notification_enabled"] if notification is None else notification
 
-    stamp = int(time.time())
-    audio_path = f"/tmp/tts_say_{stamp}.mp3"
-    engine = None
+    if engine == "auto":
+        chain = (["google"] if GOOGLE_TTS_API_KEY else []) + ["gtts", "espeak"]
+    else:
+        chain = [engine]
+
+    errors = []
+    for eng in chain:
+        try:
+            if eng == "google":
+                path, cached = google_tts_synth(text, lang, voice, settings)
+                keep = True
+            elif eng == "openai":
+                path, cached = openai_tts_synth(text, settings, voice)
+                keep = True
+            elif eng == "gtts":
+                path, cached = gtts_synth(text, lang, slow)
+                keep = True
+            elif eng == "espeak":
+                path, cached = espeak_synth(text, lang, slow)
+                keep = False
+            else:
+                raise HTTPException(status_code=400, detail=f"Неизвестный движок: {eng}")
+            prev = play_announcement(path, volume, notification,
+                                     settings["notification_volume"],
+                                     settings["pause_duration"], keep)
+            return {"message": "Произношу", "engine": eng, "cached": cached,
+                    "text": text, "lang": lang, "volume": volume,
+                    "restored_volume": prev}
+        except HTTPException:
+            raise
+        except Exception as e:
+            errors.append(f"{eng}: {e}")
+            logger.warning(f"TTS {eng} не сработал: {e}")
+    raise HTTPException(status_code=502, detail="; ".join(errors))
+
+
+@app.get("/surface/tts-voices")
+async def tts_voices():
+    """Доступные голоса (Google по языкам, OpenAI) и текущие настройки"""
+    voices = {}
     try:
-        from gtts import gTTS
-        gTTS(text=text, lang=lang, slow=slow).save(audio_path)
-        engine = "gtts"
-    except Exception as e:
-        logger.warning(f"gTTS не сработал ({e}), пробую espeak-ng")
-        audio_path = f"/tmp/tts_say_{stamp}.wav"
-        speed = 110 if slow else 145
-        result = run_command(f"espeak-ng -v {lang} -s {speed} -w {audio_path} {shlex.quote(text)}")
-        if not result["success"]:
-            raise HTTPException(status_code=500,
-                                detail=f"Ни gTTS, ни espeak-ng не сработали: {result['stderr'].strip()}")
-        engine = "espeak-ng"
+        with open(TTS_VOICES_FILE) as f:
+            voices = json.load(f)
+    except (OSError, ValueError):
+        pass
+    return {"voices": voices, "settings": load_tts_settings(),
+            "google_key": bool(GOOGLE_TTS_API_KEY), "openai_key": bool(OPENAI_API_KEY)}
 
-    player = "mpg123 -q" if audio_path.endswith(".mp3") else "paplay"
-    restore_volume = (f"; amixer -D pulse sset Master {prev_volume}% >/dev/null"
-                      if prev_volume is not None else "")
-    spawn(f"{player} {audio_path}{restore_volume}; rm -f {audio_path}")
-    return {"message": "Произношу", "engine": engine, "text": text,
-            "volume": volume, "restored_volume": prev_volume, "lang": lang}
+
+@app.post("/surface/tts-settings")
+async def tts_settings_update(update: Dict[str, Any]):
+    """Обновить настройки TTS (принимает любые ключи из настроек)"""
+    settings = load_tts_settings()
+    unknown = [k for k in update if k not in TTS_DEFAULTS]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Неизвестные ключи: {', '.join(unknown)}")
+    settings.update(update)
+    try:
+        save_tts_settings(settings)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось сохранить: {e}")
+    return {"message": "Сохранено", "settings": settings}
 
 
 @app.post("/surface/tts-play-upload")

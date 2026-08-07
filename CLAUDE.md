@@ -411,10 +411,30 @@ systemd тоже падал в x11 — теперь пин `--vo=gpu --gpu-conte
 Pi 4 честно тянет только 480p — это и есть дефолт `quality` (панели 800x480
 больше и не надо). Итог: ~3 дропа/с вместо ~40.
 
-`tts-say` произносит напечатанный текст: gTTS (голос Google, нужен интернет),
-фоллбек — `espeak-ng` (робот, но офлайн). Кириллицу в URL слать только
+`tts-say` произносит напечатанный текст. Кириллицу в URL слать только
 percent-encoded (`curl -G --data-urlencode`), иначе uvicorn отбрасывает
 запрос ещё до обработчика.
+
+### 6.20. TTS перенесён с 3B (2026-08-07)
+
+На 3B в `/home/oleg/tts` жил отдельный TTS-сервер (порт 8000): Google Cloud
+TTS (Wavenet/Chirp3-HD, ro+es), OpenAI TTS, кеш, серверные настройки, своя
+веб-страница. Перенесён **внутрь** нашего API (по решению Олега — без второго
+сервиса): цепочка `google → gtts → espeak` в `tts-say`, `tts-voices`,
+`tts-settings`, кеш в `/var/lib/kiosk/tts-cache` (схема ключа сохранена —
+108 готовых озвучек скопированы с 3B и продолжают находиться), настройки в
+`/var/lib/kiosk/tts.json` (перенесены: голос ro-RO-Wavenet-B, es-Chirp3-HD).
+Ключи — **только** в `/etc/kiosk/kiosk.env` (`GOOGLE_TTS_API_KEY`,
+`OPENAI_API_KEY`), в старом коде они были зашиты прямо в исходник. Chirp-голоса
+не принимают pitch/gain — код это учитывает. Блок TTS — коллапс-секция на
+`/surface/remote`; отдельной страницы больше нет.
+
+Копия старого кода: `/home/oleg/tts-from-3b` на pi4 (не в репозитории).
+
+**Инвентаризация 3B** (по просьбе Олега): кроме киоска и TTS там живут
+`remote-server`+`remote-listener` (самодельный «Remote Control» в `~/remote`),
+стрим CSI-камеры (`csi-stream.sh` → rpicam-vid → /dev/video10, медиа в
+`~/CamerasMedia`) и `beszel-agent` (мониторинг). Их никто не переносил.
 
 ---
 

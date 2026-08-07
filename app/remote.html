@@ -97,6 +97,34 @@
     font-size: 14px; margin-bottom: 8px;
   }
   #q-sched.disabled { opacity: .35; pointer-events: none; filter: grayscale(.6); }
+  details.card summary { list-style: none; cursor: pointer; }
+  details.card summary::-webkit-details-marker { display: none; }
+  details.card summary h2 { margin: 0; }
+  details.card[open] summary h2 { margin-bottom: 10px; }
+  details.card summary h2 .arrow { transition: transform .2s; display: inline-block; }
+  details.card[open] summary h2 .arrow { transform: rotate(90deg); }
+  textarea {
+    width: 100%; min-height: 84px; background: #0b0e12; color: var(--fg);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+    font-size: 16px; resize: vertical; font-family: inherit;
+  }
+  select.inp, input.inp {
+    background: #0b0e12; border: 1px solid var(--line); color: var(--fg);
+    border-radius: 8px; padding: 8px; font-size: 14px;
+  }
+  .chips { display: flex; gap: 8px; margin: 10px 0; }
+  .chip {
+    flex: 1; text-align: center; padding: 9px 0; border-radius: 10px;
+    border: 1px solid var(--line); background: #232b34; cursor: pointer;
+    font-size: 14px; user-select: none;
+  }
+  .chip.sel { background: #114d66; border-color: #1a6b8d; color: var(--accent); font-weight: 600; }
+  .preset { display: flex; align-items: center; gap: 8px; padding: 8px 0;
+            border-bottom: 1px solid var(--line); }
+  .preset:last-child { border-bottom: none; }
+  .preset span { flex: 1; font-size: 15px; cursor: pointer; }
+  .preset i { color: var(--dim); font-style: normal; font-size: 12px; }
+  .preset b { color: var(--bad); cursor: pointer; font-weight: normal; padding: 0 6px; font-size: 18px; }
 </style>
 </head>
 <body>
@@ -202,29 +230,50 @@
   </div>
 </div>
 
-<div class="card">
-  <h2>Объявление (TTS) <a href="/surface/tts" style="color:var(--accent);font-size:13px;text-decoration:none;text-transform:none;letter-spacing:0">страница TTS →</a></h2>
-  <div class="row">
-    <input type="text" id="tts-text" placeholder="Напечатай, что сказать…" style="flex:1 1 100%">
+<details class="card" id="tts-card" open>
+  <summary><h2><span class="arrow">▸</span> Объявления (TTS) <span id="tts-engine-badge"></span></h2></summary>
+  <textarea id="tts-text" placeholder="Напечатай, что сказать…"></textarea>
+  <div class="chips" id="tts-langs">
+    <div class="chip sel" data-lang="ro">RO</div>
+    <div class="chip" data-lang="es">ES</div>
+    <div class="chip" data-lang="ru">RU</div>
+    <div class="chip" data-lang="en">EN</div>
   </div>
-  <div class="row" style="margin-top:8px">
-    <button class="primary wide" onclick="sayText()">Произнести на киоске</button>
+  <div class="row" style="align-items:center">
+    <span class="muted">Голос</span>
+    <select id="tts-voice" class="inp" style="flex:1" onchange="ttsVoiceChanged(this.value)"></select>
   </div>
-  <div class="muted" style="margin:6px 0 10px">…или отправить готовый аудиофайл:</div>
-  <label class="file" for="tts-file" id="tts-label">Выбрать аудиофайл…</label>
-  <input type="file" id="tts-file" accept="audio/*" style="display:none"
-         onchange="document.getElementById('tts-label').textContent = this.files[0]?.name || 'Выбрать аудиофайл…'">
   <div class="row" style="align-items:center">
     <span class="muted">Громкость</span>
-    <input type="number" id="tts-vol" value="90" min="0" max="150" style="width:70px">
+    <input type="number" id="tts-vol" class="inp" value="55" min="0" max="150" style="width:64px"
+           onchange="ttsSet('volume', parseInt(this.value))">
     <label class="muted" style="display:flex;align-items:center;gap:6px">
-      <input type="checkbox" id="tts-ding" checked> сигнал перед
+      <input type="checkbox" id="tts-ding" checked
+             onchange="ttsSet('notification_enabled', this.checked)"> сигнал
     </label>
+    <span class="muted">Скорость</span>
+    <input type="number" id="tts-speed" class="inp" value="1" min="0.5" max="2" step="0.1" style="width:56px"
+           onchange="ttsSet('google_speed', parseFloat(this.value))">
   </div>
   <div class="row" style="margin-top:8px">
-    <button class="primary wide" onclick="playTts()">Проиграть на киоске</button>
+    <button class="primary wide" onclick="sayText()">🔊 Произнести на киоске</button>
   </div>
-</div>
+  <div style="margin-top:12px">
+    <h2 style="margin-bottom:4px">Быстрые фразы</h2>
+    <div id="tts-presets"></div>
+    <button style="background:none;border:1px dashed var(--line);color:var(--dim);min-height:38px;font-size:13px;margin-top:6px"
+            onclick="addPreset()">+ сохранить текущий текст как фразу</button>
+  </div>
+  <div style="margin-top:12px">
+    <h2 style="margin-bottom:4px">Готовый аудиофайл</h2>
+    <label class="file" for="tts-file" id="tts-label">Выбрать аудиофайл…</label>
+    <input type="file" id="tts-file" accept="audio/*" style="display:none"
+           onchange="document.getElementById('tts-label').textContent = this.files[0]?.name || 'Выбрать аудиофайл…'">
+    <div class="row">
+      <button class="wide" onclick="playTts()">Проиграть файл на киоске</button>
+    </div>
+  </div>
+</details>
 
 <div class="card">
   <h2>Плеер (MPV)</h2>
@@ -260,7 +309,6 @@
 
 <div class="card links">
   <h2>Ссылки</h2>
-  <a href="/surface/tts">Страница TTS — объявления с быстрыми фразами</a>
   <a href="/docs" target="_blank">Swagger — вся документация API, можно дёргать кнопками</a>
   <a href="/" target="_blank">Список всех эндпоинтов (JSON)</a>
   <a href="/surface/health" target="_blank">Health — состояние киоска одним JSON</a>
@@ -439,13 +487,110 @@
          '&loop=' + loop + '&quality=' + q, 'Запускаю видео…');
   }
 
+  // ---------------- TTS ----------------
+
+  let ttsLang = 'ro';
+  let ttsVoices = {};
+  let ttsSettings = {};
+
+  document.querySelectorAll('#tts-langs .chip').forEach(chip => {
+    chip.onclick = () => {
+      document.querySelectorAll('#tts-langs .chip').forEach(c => c.classList.remove('sel'));
+      chip.classList.add('sel');
+      ttsLang = chip.dataset.lang;
+      renderVoices();
+    };
+  });
+
+  async function loadTts() {
+    try {
+      const data = await (await fetch('/surface/tts-voices')).json();
+      ttsVoices = data.voices.google || {};
+      ttsSettings = data.settings;
+      document.getElementById('tts-vol').value = ttsSettings.volume;
+      document.getElementById('tts-ding').checked = ttsSettings.notification_enabled;
+      document.getElementById('tts-speed').value = ttsSettings.google_speed;
+      document.getElementById('tts-engine-badge').innerHTML = data.google_key
+        ? pill('Google HD', 'ok') : pill('gTTS', 'warn');
+      renderVoices();
+    } catch (e) { /* блок останется с дефолтами */ }
+  }
+
+  function renderVoices() {
+    const sel = document.getElementById('tts-voice');
+    const list = ttsVoices[ttsLang] || [];
+    if (!list.length) {
+      sel.innerHTML = '<option value="">обычный голос Google (gTTS)</option>';
+      return;
+    }
+    const current = ttsSettings['google_voice_' + ttsLang] || '';
+    sel.innerHTML = list.map(v =>
+      `<option value="${v.name}" ${v.name === current ? 'selected' : ''}>` +
+      `${v.name.replace(/^[a-z]{2}-[A-Z]{2}-/, '')} (${v.gender === 'F' ? 'жен' : 'муж'})</option>`
+    ).join('');
+  }
+
+  async function ttsVoiceChanged(name) {
+    if (!name) return;
+    await ttsSet('google_voice_' + ttsLang, name);
+  }
+
+  async function ttsSet(key, value) {
+    try {
+      const r = await fetch('/surface/tts-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: value }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.detail || r.status);
+      ttsSettings = data.settings;
+      toast('Настройки TTS сохранены');
+    } catch (e) {
+      toast('Ошибка: ' + e.message, true);
+    }
+  }
+
   async function sayText() {
     const text = document.getElementById('tts-text').value.trim();
     if (!text) { toast('Напечатай текст', true); return; }
-    const vol = document.getElementById('tts-vol').value;
-    const ding = document.getElementById('tts-ding').checked;
-    call('/surface/tts-say?text=' + encodeURIComponent(text) +
-         '&volume=' + vol + '&notification=' + ding, 'Произношу…');
+    call('/surface/tts-say?text=' + encodeURIComponent(text) + '&lang=' + ttsLang,
+         'Произношу…');
+  }
+
+  const defaultPresets = [
+    { text: 'Masa este gata!', lang: 'ro' },
+    { text: 'Mergem la culcare.', lang: 'ro' },
+    { text: 'Ema, vino aici, te rog.', lang: 'ro' },
+  ];
+  let ttsPresets = JSON.parse(localStorage.getItem('tts-presets') || 'null') || defaultPresets;
+
+  function renderPresets() {
+    document.getElementById('tts-presets').innerHTML = ttsPresets.map((p, i) =>
+      `<div class="preset">
+         <span onclick="playPreset(${i})">${p.text}</span>
+         <i>${p.lang.toUpperCase()}</i>
+         <b onclick="delPreset(${i})">×</b>
+       </div>`).join('') || '<div class="muted">пока пусто</div>';
+    localStorage.setItem('tts-presets', JSON.stringify(ttsPresets));
+  }
+
+  function playPreset(i) {
+    const p = ttsPresets[i];
+    call('/surface/tts-say?text=' + encodeURIComponent(p.text) + '&lang=' + p.lang, 'Произношу…');
+  }
+
+  function addPreset() {
+    const text = document.getElementById('tts-text').value.trim();
+    if (!text) { toast('Сначала напечатай текст', true); return; }
+    ttsPresets.push({ text, lang: ttsLang });
+    renderPresets();
+    toast('Сохранено');
+  }
+
+  function delPreset(i) {
+    ttsPresets.splice(i, 1);
+    renderPresets();
   }
 
   async function playTts() {
@@ -552,6 +697,8 @@
   loadQuiet();
   loadSinks();
   loadOutputs();
+  loadTts();
+  renderPresets();
   setInterval(refreshStatus, 30000);
 </script>
 </body>
