@@ -20,6 +20,7 @@ import threading
 import shlex
 import hashlib
 import base64
+from html import escape as html_escape
 
 
 def _detect_display_output() -> str:
@@ -56,14 +57,12 @@ def _detect_display_output() -> str:
 
 DISPLAY_OUTPUT = _detect_display_output()
 
-# Настройка логирования
+# Настройка логирования. Только stdout: его пишет journald; файл в /tmp
+# рос без ротации и умирал при перезагрузке.
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("/tmp/surface_api.log"),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger("surface-api")
 
@@ -89,14 +88,10 @@ MPV_TIMEOUT = 3  # секунды для таймаута команд MPV
 # Без --window-size: в режиме --kiosk окно само занимает весь экран, а зашитые
 # 1920x1080 промахиваются на любой другой панели (DSI — 800x480).
 CHROME_KIOSK_CMD = "/usr/bin/chromium --kiosk --disable-infobars --no-first-run --no-sandbox"
-DEFAULT_HTML_DIR = "/tmp/surface_control"
 # Файлы, которые лежат рядом с main.py
 CURRENT_DIR = pathlib.Path(__file__).parent.absolute()
 NOTIFICATION_FILE = os.path.join(CURRENT_DIR, "notification.mp3")
 REMOTE_HTML_FILE = os.path.join(CURRENT_DIR, "remote.html")
-
-# Создаем директории, если не существуют
-os.makedirs(DEFAULT_HTML_DIR, exist_ok=True)
 
 
 ########################
@@ -174,9 +169,15 @@ async def mpv_command(command, timeout=MPV_TIMEOUT):
 
         sock.close()
 
-        # Парсим ответ
+        # Парсим ответ. mpv отвечает {"error": "success"} при УСПЕХЕ — само
+        # слово "error" в ключе не значит ошибку; нормализуем, чтобы
+        # обработчики не принимали успех за отказ (playback-next возвращал
+        # «Ошибка: success» при реально переключённом треке).
         try:
-            return json.loads(response.decode())
+            parsed = json.loads(response.decode())
+            if parsed.get("error") == "success":
+                parsed["error"] = None
+            return parsed
         except json.JSONDecodeError:
             return {"response": response.decode(), "success": True}
 
@@ -292,7 +293,7 @@ def create_immich_playlist(ip: str, videos: List[dict]) -> str:
     return playlist_content
 
 
-def create_immich_script(ip: str, api_key: str) -> str:
+def create_immich_script(api_key: str) -> str:
     """Создает скрипт для запуска плейлиста Immich с MPV"""
     script = f"""#!/bin/bash
 # Скрипт автоматически сгенерирован Surface API
@@ -415,6 +416,7 @@ async def system_status():
         audio_output_result = run_command(audio_output_cmd)
         current_sink = audio_output_result["stdout"].strip() if audio_output_result["success"] else "unknown"
 
+        muted = "yes" in run_command("pactl get-sink-mute @DEFAULT_SINK@")["stdout"].lower()
         return {
             "display": {
                 "state": display_state
@@ -422,7 +424,7 @@ async def system_status():
             "audio": {
                 "volume": volume,
                 "output": current_sink,
-                "muted": False  # Нужно добавить проверку
+                "muted": muted
             },
             "playback": {
                 "mpv_active": mpv_active,
@@ -613,15 +615,24 @@ def _darken_now():
             f.write(_QUIET_MARK + "\n")
     except OSError:
         pass
-    run_command("pactl set-sink-mute @DEFAULT_SINK@ 1")
+    _mute_all_sinks(True)
     kill_mpv_processes()
     run_command(f"export DISPLAY=:0 && xrandr --output {DISPLAY_OUTPUT} --off")
+
+
+def _mute_all_sinks(mute: bool):
+    """Заглушить/разглушить все выходы, а не только дефолтный: во время
+    тишины выход мог смениться (audio-to/bt и т.п.), и mute на одном
+    @DEFAULT_SINK@ оставлял бы другой орущим."""
+    flag = "1" if mute else "0"
+    run_command("pactl list short sinks | cut -f2 | "
+                f"xargs -r -I{{}} pactl set-sink-mute {{}} {flag}")
 
 
 def _wake_and_restore():
     """Включить экран и звук немедленно и вернуть киоск"""
     set_display_off_flag(False)
-    run_command("pactl set-sink-mute @DEFAULT_SINK@ 0")
+    _mute_all_sinks(False)
     run_command(f"export DISPLAY=:0 && xset s off && xset s noblank "
                 f"&& xrandr --output {DISPLAY_OUTPUT} --auto")
     _airplay_restore_kiosk()
@@ -722,6 +733,13 @@ def _quiet_enforcer():
                 if _display_is_on():
                     _darken_now()
                     logger.info("Режим тишины: экран и звук выключены")
+                else:
+                    # Экран тёмный, но звук могли включить обратно (смена
+                    # выхода, ручной unmute) — тишина переустанавливается
+                    # каждый тик, а ожившие плееры добиваются.
+                    _mute_all_sinks(True)
+                    if run_command("pgrep -x mpv")["success"]:
+                        kill_mpv_processes()
             else:
                 try:
                     mark = open(DISPLAY_OFF_FLAG).read().strip()
@@ -1047,7 +1065,7 @@ async def bt_devices():
 
 
 @app.get("/surface/bt-scan")
-async def bt_scan(seconds: int = Query(12, ge=3, le=30)):
+def bt_scan(seconds: int = Query(12, ge=3, le=30)):
     """Поиск Bluetooth-устройств рядом (блокирует на время поиска).
 
     Колонку перед поиском перевести в режим сопряжения.
@@ -1080,7 +1098,7 @@ def _bt_connect_core(mac: str):
 
 
 @app.get("/surface/bt-connect/{mac}")
-async def bt_connect(mac: str):
+def bt_connect(mac: str):
     """Подключить Bluetooth-колонку и сразу перевести звук на неё"""
     _bt_check_mac(mac)
     sink_name = _bt_connect_core(mac)
@@ -1136,7 +1154,7 @@ def resolve_sink_target(target: str) -> str:
 
 
 @app.get("/surface/audio-to/{target}")
-async def audio_to(target: str):
+def audio_to(target: str):
     """Перевести звук на выход по короткому имени: bt, usb, hdmi, jack.
 
     Для автоматизаций: curl .../surface/audio-to/bt — и всё дальнейшее играет
@@ -1151,7 +1169,7 @@ async def audio_to(target: str):
 
 
 @app.get("/surface/bt-disconnect/{mac}")
-async def bt_disconnect(mac: str):
+def bt_disconnect(mac: str):
     """Отключить Bluetooth-устройство (остаётся сопряжённым)"""
     _bt_check_mac(mac)
     run_command(f"timeout 15 bluetoothctl disconnect {mac}")
@@ -1159,7 +1177,7 @@ async def bt_disconnect(mac: str):
 
 
 @app.get("/surface/bt-forget/{mac}")
-async def bt_forget(mac: str):
+def bt_forget(mac: str):
     """Забыть Bluetooth-устройство совсем"""
     _bt_check_mac(mac)
     run_command(f"bluetoothctl remove {mac}")
@@ -1213,6 +1231,61 @@ async def _start_bt_keepalive():
     threading.Thread(target=_bt_keepalive, daemon=True).start()
 
 
+def _player_watch():
+    """Автовозврат киоска, когда видео или плейлист доиграли.
+
+    mpv исчез, браузера нет — на экране чёрный прямоугольник; вкладки
+    возвращаются сами. Исключения: экран выключен намеренно (display_off),
+    тихое окно, свежий kill-all (пользователь сам попросил пустоту).
+    """
+    def screen_is_empty():
+        if run_command("pgrep -x mpv")["success"]:
+            return False
+        return not any("chrom" in (p.info["name"] or "").lower()
+                       for p in psutil.process_iter(["name"]))
+
+    def may_restore():
+        return not quiet_now() and not os.path.exists(DISPLAY_OFF_FLAG) \
+               and time.time() - _last_killall >= 30
+
+    # Стартовая проверка: если API поднялся, а экран уже пуст (плеер умер
+    # до рестарта, свежая загрузка) — киоск возвращается сразу.
+    time.sleep(15)
+    try:
+        if screen_is_empty() and may_restore():
+            logger.info("Экран пуст на старте — возвращаю киоск")
+            _airplay_restore_kiosk()
+    except Exception as e:
+        logger.warning(f"player-watch (старт): {e}")
+
+    mpv_was_running = False
+    while True:
+        time.sleep(10)
+        try:
+            mpv_now = run_command("pgrep -x mpv")["success"]
+            if mpv_now:
+                mpv_was_running = True
+                continue
+            if not mpv_was_running:
+                continue
+            mpv_was_running = False
+            if not may_restore():
+                continue
+            browser_alive = any("chrom" in (p.info["name"] or "").lower()
+                                for p in psutil.process_iter(["name"]))
+            if browser_alive:
+                continue
+            logger.info("Плеер доиграл, экран пуст — возвращаю киоск")
+            _airplay_restore_kiosk()
+        except Exception as e:
+            logger.warning(f"player-watch: {e}")
+
+
+@app.on_event("startup")
+async def _start_player_watch():
+    threading.Thread(target=_player_watch, daemon=True).start()
+
+
 @app.get("/surface/bt-keepalive")
 async def bt_keepalive_state():
     """Настройка «не давать колонке уснуть»: интервал пингов тишиной"""
@@ -1239,12 +1312,17 @@ async def bt_keepalive_set(seconds: int):
 @app.get("/surface/toggle-mute")
 async def toggle_mute():
     """Включение/выключение звука"""
+    # В тихое окно звук выключен стражем; один тап здесь снимал бы mute
+    # до утра.
+    ensure_not_quiet()
     cmd = "pactl set-sink-mute @DEFAULT_SINK@ toggle"
     result = run_command(cmd)
 
     if result["success"]:
         # Определяем, включен звук или выключен
-        mute_cmd = "pactl list sinks | grep Mute | head -1"
+        # Именно дефолтный sink: grep по всем выходам читал mute первого
+        # попавшегося, а не активного.
+        mute_cmd = "pactl get-sink-mute @DEFAULT_SINK@"
         mute_result = run_command(mute_cmd)
 
         if mute_result["success"]:
@@ -1367,9 +1445,16 @@ async def toggle_fill():
     return {"mode": mode, "panscan": new_panscan, "message": f"Режим заполнения изменен на {mode}"}
 
 
+# Метка намеренного kill-all: вотчер плеера не должен «чинить» пустой экран,
+# который пользователь только что попросил очистить.
+_last_killall = 0.0
+
+
 @app.get("/surface/kill-all")
 async def kill_all():
     """Завершение всех процессов Chrome и MPV"""
+    global _last_killall
+    _last_killall = time.time()
     chrome_result = kill_chrome_processes()
     mpv_result = kill_mpv_processes()
 
@@ -1872,7 +1957,7 @@ def play_announcement(path: str, volume: int, notification: bool,
 
 
 @app.get("/surface/tts-say")
-async def tts_say(
+def tts_say(
         text: str = Query(..., min_length=1, max_length=1000, description="Текст для озвучки"),
         lang: str = Query("ro", description="Язык (ro, es, ru, en, ...)"),
         engine: str = Query("auto", description="auto | google | openai | gtts | espeak"),
@@ -1893,7 +1978,10 @@ async def tts_say(
     Синтез кешируется — повторные фразы играют мгновенно и бесплатно.
     """
     ensure_not_quiet()
-    sink = resolve_sink_target(output) if output else None
+    # lang уходит в shell-команду espeak — только буквенный код
+    if not re.fullmatch(r"[A-Za-z]{2,5}(-[A-Za-z]{2,10})?", lang):
+        raise HTTPException(status_code=400, detail=f"Странный код языка: {lang}")
+    sink = resolve_sink_target(output) if isinstance(output, str) and output else None
     settings = load_tts_settings()
     volume = settings["volume"] if volume is None else volume
     notification = settings["notification_enabled"] if notification is None else notification
@@ -1940,7 +2028,7 @@ async def tts_say(
 
 
 @app.get("/tts/google")
-async def tts_google_compat(
+def tts_google_compat(
         text: str = Query(..., description="Текст для озвучивания"),
         lang: str = Query("ro", description="Язык"),
         volume: float = Query(None, ge=0.0, le=2.0, description="Громкость 0.0-1.0 (старая шкала)"),
@@ -1954,7 +2042,7 @@ async def tts_google_compat(
     """Совместимость со старым TTS-сервером с 3B (порт 8000): тот же путь и
     параметры — в автоматизациях достаточно поменять адрес на
     http://<киоск>:7000/tts/google"""
-    return await tts_say(
+    return tts_say(
         text=text, lang=lang, engine="google", voice=voice,
         volume=None if volume is None else round(volume * 100),
         notification=notification_enabled,
@@ -1964,7 +2052,7 @@ async def tts_google_compat(
 
 
 @app.get("/tts/openai")
-async def tts_openai_compat(
+def tts_openai_compat(
         text: str = Query(..., description="Текст для озвучивания"),
         volume: float = Query(None, ge=0.0, le=2.0),
         notification_enabled: bool = Query(None),
@@ -1972,7 +2060,7 @@ async def tts_openai_compat(
         speed: float = Query(None, ge=0.25, le=4.0),
 ):
     """Совместимость со старым TTS-сервером с 3B: OpenAI-движок"""
-    return await tts_say(
+    return tts_say(
         text=text, lang="ro", engine="openai", voice=voice,
         volume=None if volume is None else round(volume * 100),
         notification=notification_enabled, speed=speed, slow=False,
@@ -1999,6 +2087,23 @@ async def tts_settings_update(update: Dict[str, Any]):
     unknown = [k for k in update if k not in TTS_DEFAULTS]
     if unknown:
         raise HTTPException(status_code=400, detail=f"Неизвестные ключи: {', '.join(unknown)}")
+    # Значения потом попадают в shell-команды и кеш-ключи — проверяем типы
+    # и диапазоны, а не только имена.
+    numeric = {"volume": (0, 150), "notification_volume": (0, 150),
+               "pause_duration": (0, 5), "google_speed": (0.25, 4),
+               "google_pitch": (-20, 20), "google_gain": (-96, 16),
+               "openai_speed": (0.25, 4)}
+    for key, value in update.items():
+        if key in numeric:
+            low, high = numeric[key]
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not low <= value <= high:
+                raise HTTPException(status_code=400, detail=f"{key}: число {low}..{high}")
+        elif key == "notification_enabled":
+            if not isinstance(value, bool):
+                raise HTTPException(status_code=400, detail=f"{key}: true/false")
+        else:  # голоса
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", value):
+                raise HTTPException(status_code=400, detail=f"{key}: недопустимое имя голоса")
     settings.update(update)
     try:
         save_tts_settings(settings)
@@ -2013,7 +2118,7 @@ async def play_uploaded_audio(
         main_volume: int = Form(100, description="Громкость воспроизведения основного аудио (0-150)"),
         play_notification: bool = Form(True, description="Проиграть звук уведомления перед речью"),
         notification_volume: int = Form(80, description="Громкость уведомления (0-150)"),
-        delay_after_notification: float = Form(0.5,
+        delay_after_notification: float = Form(0.5, ge=0, le=5,
                                                description="Задержка в секундах между уведомлением и основным аудио")
 ):
     """
@@ -2142,8 +2247,21 @@ async def chrome_tabs_slideshow(
     Открывает URL в единственном окне Chrome и циклически отображает их через iframe с заданными интервалами.
     """
     ensure_not_quiet()
-    # Создаем директорию для логов
+    # Валидация ДО убийства браузера: плохой запрос не должен оставлять
+    # после себя чёрный экран.
+    if not urls or not times or len(urls) == 0:
+        raise HTTPException(status_code=400,
+                            detail="Необходимо указать хотя бы один URL и время отображения")
+    # Создаем директорию для логов; старые файлы подчищаем — по одному на
+    # каждый запуск ротации они копились в tmpfs бесконечно.
     os.makedirs("/tmp/chrome_tabs_logs", exist_ok=True)
+    try:
+        stale = sorted(pathlib.Path("/tmp/chrome_tabs_logs").glob("debug_*.log"),
+                       key=os.path.getmtime)
+        for old in stale[:-20]:
+            old.unlink()
+    except OSError:
+        pass
 
     # Сохраняем подробный лог действий
     log_file = f"/tmp/chrome_tabs_logs/debug_{int(time.time())}.log"
@@ -2164,11 +2282,6 @@ async def chrome_tabs_slideshow(
     kill_chrome_processes()
     kill_mpv_processes()
     log_action("Существующие процессы Chrome и MPV завершены")
-
-    if not urls or not times or len(urls) == 0:
-        error_msg = "Необходимо указать хотя бы один URL и время отображения"
-        log_action(f"Ошибка: {error_msg}")
-        raise HTTPException(status_code=400, detail=error_msg)
 
     # Создаем список URL с временем отображения
     tabs = []
@@ -2334,7 +2447,7 @@ xrandr --output {DISPLAY_OUTPUT} --auto
 
 
 @app.get("/surface/play")
-async def play_media(
+def play_media(
         url: str = Query(..., description="URL медиа для воспроизведения"),
         volume: int = Query(100, ge=0, le=150, description="Громкость воспроизведения (0-150)"),
         loop: bool = Query(True, description="Повторять воспроизведение"),
@@ -2342,7 +2455,8 @@ async def play_media(
         quality: int = Query(720, ge=144, le=2160,
                              description="Потолок высоты видео для YouTube. 720 — максимум, который "
                                          "Pi 4 декодит без рывков (софтом; 1080p — ~40 дропов/с)"),
-        output: str = Query(None, description="Куда играть звук: bt, usb, hdmi, jack или имя выхода")
+        output: str = Query(None, description="Куда играть звук: bt, usb, hdmi, jack или имя выхода"),
+        shuffle: bool = Query(True, description="Перемешивать плейлист (на одиночное видео не влияет)")
 ):
     """
     Универсальный эндпоинт для воспроизведения медиа через MPV.
@@ -2353,13 +2467,16 @@ async def play_media(
     - Другие URL: прямой запуск через MPV
     """
     ensure_not_quiet()
+    if not url:
+        raise HTTPException(status_code=400, detail="URL не указан")
+    # Валидация ДО убийства браузера: плохой запрос не должен оставлять
+    # чёрный экран. И только безопасные схемы — url уходит в shell-команду.
+    if not re.match(r"^(https?|file)://", url):
+        raise HTTPException(status_code=400, detail="URL должен начинаться с http(s):// или file://")
     sink = resolve_sink_target(output) if output else None
     # Завершаем все текущие процессы воспроизведения
     kill_chrome_processes()
     kill_mpv_processes()
-
-    if not url:
-        raise HTTPException(status_code=400, detail="URL не указан")
 
     # Определяем тип URL
     is_youtube_video = ("youtube.com" in url and "v=" in url) or "youtu.be" in url
@@ -2424,6 +2541,8 @@ async def play_media(
         # Для плейлистов и миксов YouTube
         media_type = "youtube_playlist" if is_youtube_playlist else "youtube_mix"
         mpv_params.append("--ytdl-raw-options=yes-playlist=")
+        if shuffle:
+            mpv_params.append("--shuffle")
         if loop:
             mpv_params.append("--loop-playlist=inf")
 
@@ -2435,7 +2554,7 @@ async def play_media(
 
     # Собираем полную команду
     mpv_params_str = " ".join(mpv_params)
-    full_cmd = f"export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output {DISPLAY_OUTPUT} --auto && mpv {mpv_params_str} \"{url}\" > /tmp/mpv_play.log 2>&1 &"
+    full_cmd = f"export DISPLAY=:0 && xset s off && xset s noblank && xrandr --output {DISPLAY_OUTPUT} --auto && mpv {mpv_params_str} {shlex.quote(url)} > /tmp/mpv_play.log 2>&1 &"
 
     logger.info(f"Запуск команды: {full_cmd}")
     set_display_off_flag(False)
@@ -2453,7 +2572,7 @@ async def play_media(
 
 
 @app.get("/surface/immich/album")
-async def play_immich_album(
+def play_immich_album(
         ip: str = Query(..., description="IP-адрес сервера Immich"),
         api_key: str = Query(..., description="API ключ для доступа к Immich"),
         album_id: str = Query(..., description="ID альбома в Immich"),
@@ -2510,17 +2629,15 @@ async def play_immich_album(
         playlist_content = create_immich_playlist(ip, limited_videos)
 
         # Создаем скрипт для запуска
-        script_content = create_immich_script(ip, api_key)
+        script_content = create_immich_script(api_key)
 
         # Сохраняем плейлист и скрипт
         save_immich_files(playlist_content, script_content)
 
-        # Запускаем скрипт
-        result = run_command("/tmp/play_immich.sh")
-
-        if not result["success"]:
-            logger.error(f"Ошибка запуска плеера: {result['stderr']}")
-            raise HTTPException(status_code=500, detail=f"Ошибка запуска плеера: {result['stderr']}")
+        # Запускаем скрипт в фоне: mpv играет плейлист часами, ждать его
+        # окончания в обработчике значило бы таймаут через 30с и ложный 500
+        # при живом воспроизведении.
+        spawn("/tmp/play_immich.sh > /tmp/play_immich.log 2>&1")
 
         return {
             "status": "success",
@@ -2539,7 +2656,7 @@ async def play_immich_album(
 
 
 @app.get("/surface/webcam")
-async def show_webcam(
+def show_webcam(
         url: str = Query("http://2.136.193.46:8081/cgi-bin/CGIProxy.fcgi", description="URL веб-камеры"),
         usr: str = Query("Cnb", description="Имя пользователя для веб-камеры"),
         pwd: str = Query("Club@00", description="Пароль для веб-камеры"),
@@ -2629,6 +2746,11 @@ def create_webcam_html(
     # были вложенными обычными литералами внутри общей f-строки: `{{` в них не
     # разэкранировались, и при show_temp=true в страницу попадал синтаксически
     # битый JS, который ломал весь <script> вместе с обновлением картинки.
+    # Параметры запроса попадают в HTML/JS сгенерированной страницы —
+    # экранируем, чтобы кавычка в location или url не ломала (и не
+    # исполняла) разметку: страница открывается с --disable-web-security.
+    location = html_escape(location)
+    webcam_src_prefix = json.dumps(f"{url}?cmd=snapPicture2&usr={usr}&pwd={pwd}&")
     weather_div = f"""
         <div id="weather-info">
             <div class="location">{location}</div>
@@ -2787,7 +2909,7 @@ def create_webcam_html(
         function refreshWebcam() {{
             const img = document.getElementById('webcam-image');
             counter++;
-            img.src = '{url}?cmd=snapPicture2&usr={usr}&pwd={pwd}&' + counter;
+            img.src = {webcam_src_prefix} + counter;
         }}
 
         // Настройка обработчиков событий для изображения

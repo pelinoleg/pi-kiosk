@@ -264,6 +264,9 @@
     <label class="muted" style="display:flex;align-items:center;gap:6px">
       <input type="checkbox" id="play-loop" checked> повторять
     </label>
+    <label class="muted" style="display:flex;align-items:center;gap:6px">
+      <input type="checkbox" id="play-shuffle" checked> перемешивать
+    </label>
   </div>
   <div class="row" style="margin-top:8px">
     <button class="primary wide" onclick="playUrl()">Отправить на экран</button>
@@ -645,8 +648,9 @@
     const vol = document.getElementById('play-vol').value;
     const loop = document.getElementById('play-loop').checked;
     const q = document.getElementById('play-q').value;
+    const sh = document.getElementById('play-shuffle').checked;
     call('/surface/play?url=' + encodeURIComponent(url) + '&volume=' + vol +
-         '&loop=' + loop + '&quality=' + q, 'Запускаю видео…');
+         '&loop=' + loop + '&quality=' + q + '&shuffle=' + sh, 'Запускаю видео…');
   }
 
   // ---------------- TTS ----------------
