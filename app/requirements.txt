@@ -10,3 +10,6 @@ gTTS
 # YouTube для mpv. Протухает за месяцы — kiosk-pkg-update.timer обновляет
 # его еженедельно; апт-версия на год старше и потому не используется.
 yt-dlp
+# remote (пульт HAOBO + голосовой ассистент): Flask-сервер и evdev-слушатель.
+flask
+evdev

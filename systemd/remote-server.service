@@ -1,0 +1,18 @@
+[Unit]
+Description=Remote Control web server (config UI and action executor)
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__INSTALL_DIR__/remote
+Environment="PATH=__INSTALL_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# 5000 на киоске занят shairport-sync; kiosk.env может переопределить.
+Environment="REMOTE_PORT=5050"
+EnvironmentFile=-/etc/kiosk/kiosk.env
+ExecStart=__INSTALL_DIR__/.venv/bin/python server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

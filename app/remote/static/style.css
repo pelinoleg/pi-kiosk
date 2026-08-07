@@ -1,0 +1,779 @@
+/* ── Reset & Base ── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #0f0f1a;
+  --remote-bg: #1a1a2e;
+  --remote-radius: 40px;
+  --btn-bg: #2a2a4a;
+  --btn-hover: #363660;
+  --btn-active: #4a4a6a;
+  --btn-text: #d8d8e8;
+  --btn-radius: 12px;
+  --accent: #7c6cff;
+  --accent-light: #9b8eff;
+  --accent-dim: rgba(124, 108, 255, 0.15);
+  --ok-bg: #545369;
+  --ok-hover: #63627a;
+  --modal-bg: #ffffff;
+  --modal-border: #e4e4ea;
+  --modal-shadow: 0 24px 80px rgba(0,0,0,0.3);
+  --card-bg: #f6f6f9;
+  --card-hover: #eeeef4;
+  --text: #1a1a2e;
+  --text-secondary: #888;
+  --danger: #e74c3c;
+  --success: #27ae60;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --transition: 0.15s ease;
+  --radius: 12px;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Remote ── */
+.remote {
+  display: grid;
+  grid-template-columns: repeat(3, 72px);
+  grid-auto-rows: 56px;
+  gap: 10px;
+  padding: 40px 32px;
+  background: var(--remote-bg);
+  border-radius: var(--remote-radius);
+  box-shadow:
+    0 30px 80px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* Spacer rows */
+.remote > [style*="grid-row: 8"],
+.remote > [style*="grid-row:8"] { margin-top: 8px; }
+.remote > [style*="grid-row: 9"],
+.remote > [style*="grid-row:9"] { margin-top: 8px; }
+.remote > [style*="grid-row: 10"],
+.remote > [style*="grid-row:10"] { margin-top: 8px; }
+
+/* ── Buttons ── */
+.btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--btn-bg);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--btn-radius);
+  color: var(--btn-text);
+  cursor: pointer;
+  transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
+  font-family: var(--font);
+  outline: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn:hover {
+  background: var(--btn-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+}
+
+.btn:active {
+  background: var(--btn-active);
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.btn__icon { font-size: 18px; line-height: 1; }
+.btn__label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.7;
+}
+
+.btn--round {
+  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  justify-self: center;
+}
+
+.btn--ok {
+  background: var(--ok-bg);
+  border-radius: 50%;
+  width: 60px;
+  height: 60px;
+  justify-self: center;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.btn--ok:hover { background: var(--ok-hover); }
+
+.btn--dpad {
+  background: var(--btn-bg);
+  border-radius: 14px;
+}
+
+/* ── Configured indicator ── */
+.btn.has-press::after {
+  content: "";
+  position: absolute;
+  bottom: 4px; right: 4px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.btn.has-longpress::before {
+  content: "";
+  position: absolute;
+  top: 4px; right: 4px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #f39c12;
+}
+
+/* ── Modal Overlay ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.modal-overlay.open {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* ── Modal ── */
+.modal {
+  background: var(--modal-bg);
+  border-radius: 20px;
+  width: 700px;
+  max-width: 95vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--modal-shadow);
+  transform: translateY(20px) scale(0.97);
+  transition: transform 0.25s ease;
+}
+
+.modal-overlay.open .modal {
+  transform: translateY(0) scale(1);
+}
+
+.modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px 28px 16px;
+}
+
+.modal__title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.modal__close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  line-height: 1;
+  transition: background var(--transition), color var(--transition);
+}
+
+.modal__close:hover {
+  background: var(--card-bg);
+  color: var(--text);
+}
+
+/* ── Tabs ── */
+.modal__tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--modal-border);
+}
+
+.modal__tab {
+  background: none;
+  border: none;
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--transition), border-color var(--transition);
+  font-family: var(--font);
+}
+
+.modal__tab:hover { color: var(--text); }
+
+.modal__tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Panels ── */
+.modal__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 28px;
+}
+
+.modal__panel--hidden { display: none; }
+
+/* ── Long press duration ── */
+.longpress-duration {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 14px 16px;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+}
+
+.longpress-duration label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.longpress-duration input {
+  width: 72px;
+  padding: 6px 10px;
+  border: 1px solid var(--modal-border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: var(--font);
+  text-align: center;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.longpress-duration input:focus { border-color: var(--accent); }
+
+.longpress-duration span {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ── Action list ── */
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  transition: border-color var(--transition);
+}
+
+.action-row:hover { border-color: var(--modal-border); }
+
+.action-row__num {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  min-width: 20px;
+  text-align: center;
+}
+
+.action-row__type { flex-shrink: 0; }
+
+.action-row__type select {
+  padding: 6px 10px;
+  border: 1px solid var(--modal-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: var(--font);
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.action-row__type select:focus { border-color: var(--accent); }
+
+.action-row__input { flex: 1; min-width: 0; }
+
+.action-row__input input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--modal-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.action-row__input input:focus { border-color: var(--accent); }
+.action-row__input input::placeholder { color: #bbb; }
+
+.action-row__controls {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.action-row__controls button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 16px;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  transition: background var(--transition), color var(--transition);
+  line-height: 1;
+}
+
+.action-row__controls button:hover {
+  background: #e8e8ec;
+  color: var(--text);
+}
+
+.action-row__controls .action-delete:hover {
+  background: #fde8e8;
+  color: var(--danger);
+}
+
+/* ── Add action button ── */
+.add-action {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px;
+  background: none;
+  border: 2px dashed var(--modal-border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: border-color var(--transition), color var(--transition);
+}
+
+.add-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Footer ── */
+.modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 28px 24px;
+}
+
+.modal__btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background var(--transition), transform var(--transition);
+}
+
+.modal__btn:active { transform: scale(0.97); }
+
+.modal__btn--cancel {
+  background: #f0f0f2;
+  color: var(--text-secondary);
+}
+.modal__btn--cancel:hover { background: #e4e4e8; }
+
+.modal__btn--save {
+  background: var(--accent);
+  color: #fff;
+}
+.modal__btn--save:hover { background: var(--accent-light); }
+
+/* ── Empty state ── */
+.action-list:empty::after {
+  content: "Нет действий";
+  display: block;
+  text-align: center;
+  padding: 24px;
+  color: #ccc;
+  font-size: 14px;
+}
+
+/* ── Log button ── */
+.btn--log {
+  background: #2d2d50;
+  width: 44px;
+  height: 44px;
+}
+
+.btn--log .btn__icon {
+  font-size: 18px;
+  opacity: 0.6;
+}
+
+.btn--log:hover .btn__icon { opacity: 1; }
+
+/* ── Voice Log modal ── */
+.modal--log { width: 640px; }
+
+.modal--log .modal__body {
+  max-height: 65vh;
+  padding: 16px 24px;
+}
+
+.voice-log__empty {
+  text-align: center;
+  padding: 32px;
+  color: #bbb;
+  font-size: 14px;
+}
+
+.voice-log__entry {
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid #ececef;
+}
+
+.voice-log__time {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 8px;
+  letter-spacing: 0.3px;
+}
+
+.voice-log__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.voice-log__step {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.voice-log__step-tag {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e8e8ec;
+  color: var(--text-secondary);
+  min-width: 64px;
+  text-align: center;
+}
+
+.voice-log__step-tag--ok {
+  background: #d4edda;
+  color: #155724;
+}
+
+.voice-log__step-tag--err {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.voice-log__step-tag--warn {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.voice-log__step-detail {
+  color: var(--text);
+  word-break: break-word;
+}
+
+/* ── Settings button ── */
+.btn--settings {
+  background: #2d2d50;
+  width: 44px;
+  height: 44px;
+}
+
+.btn--settings .btn__icon {
+  font-size: 20px;
+  opacity: 0.6;
+}
+
+.btn--settings:hover .btn__icon { opacity: 1; }
+
+/* ── Settings modal ── */
+.modal--settings { width: 800px; }
+
+.modal--settings .modal__body { max-height: 65vh; }
+
+.settings-panel--hidden { display: none; }
+
+.settings-section {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f0f2;
+}
+
+.settings-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.settings-heading {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.settings-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.settings-radios {
+  display: flex;
+  gap: 20px;
+}
+
+.settings-radios label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.settings-radios input[type="radio"] { accent-color: var(--accent); }
+
+.settings-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.settings-field:last-child { margin-bottom: 0; }
+
+.settings-field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 90px;
+  flex-shrink: 0;
+}
+
+.settings-field input,
+.settings-field select {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--modal-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color var(--transition);
+}
+
+.settings-field input:focus,
+.settings-field select:focus { border-color: var(--accent); }
+
+/* ── Voice command cards ── */
+.voice-commands-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.voice-commands-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  padding: 10px 14px;
+  background: var(--accent-dim);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  border: 1px solid rgba(124, 108, 255, 0.1);
+}
+
+.voice-commands-hint b {
+  color: var(--text);
+}
+
+.voice-cmd-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  border: 1px solid #ececef;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.voice-cmd-row:hover {
+  border-color: #d0d0da;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.voice-cmd-row input,
+.voice-cmd-row textarea {
+  padding: 7px 10px;
+  border: 1px solid var(--modal-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color var(--transition);
+  box-sizing: border-box;
+}
+
+.voice-cmd-row textarea {
+  width: 100%;
+}
+
+.voice-cmd-row input:focus,
+.voice-cmd-row textarea:focus {
+  border-color: var(--accent);
+}
+
+.voice-cmd__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.voice-cmd-name {
+  width: 200px;
+  min-width: 200px;
+  max-width: 200px;
+  font-weight: 600;
+}
+
+.voice-cmd-url {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: #555;
+}
+
+.voice-cmd-desc {
+  resize: vertical;
+  min-height: 40px;
+  line-height: 1.5;
+  font-size: 13px;
+  color: #444;
+}
+
+.voice-cmd-desc::placeholder {
+  color: #bbb;
+}
+
+/* Delete — hidden until hover */
+.voice-cmd-row .action-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 16px;
+  color: #ccc;
+  border-radius: 6px;
+  transition: background var(--transition), color var(--transition), opacity var(--transition);
+  line-height: 1;
+  opacity: 0;
+}
+
+.voice-cmd-row:hover .action-delete {
+  opacity: 1;
+}
+
+.voice-cmd-row .action-delete:hover {
+  background: #fde8e8;
+  color: var(--danger);
+}
+
+.voice-commands-list:empty::after {
+  content: "No commands";
+  display: block;
+  text-align: center;
+  padding: 20px;
+  color: #ccc;
+  font-size: 13px;
+}
+
+/* ── Scrollbar ── */
+.modal__body::-webkit-scrollbar { width: 6px; }
+.modal__body::-webkit-scrollbar-track { background: transparent; }
+.modal__body::-webkit-scrollbar-thumb {
+  background: #d0d0d0;
+  border-radius: 3px;
+}

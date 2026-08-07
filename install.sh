@@ -17,6 +17,7 @@
 #   AIRPLAY       0 to skip the AirPlay receivers   (default 1)
 #   AIRPLAY_NAME  name iOS shows                    (default the hostname)
 #   HW_WATCHDOG   1 to arm the hardware watchdog    (default off, see README)
+#   REMOTE        0 to skip the HAOBO remote control services (default on)
 #   DISPLAY_OFF_AT / DISPLAY_ON_AT   HH:MM to blank the panel overnight
 #
 # HDMI is used automatically whenever a cable is present, and the built-in
@@ -83,7 +84,7 @@ sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     xserver-xorg x11-xserver-utils xinit openbox unclutter \
     chromium \
-    python3 python3-venv python3-pip python3-pyqt5 \
+    python3 python3-venv python3-pip python3-pyqt5 python3-dev \
     mpv ffmpeg mpg123 pulseaudio alsa-utils espeak-ng \
     network-manager curl wget git socat scrot \
     >/dev/null || die "Package installation failed."
@@ -115,6 +116,7 @@ if [ "$SRC_APP" != "$DST_APP" ]; then
     sudo cp "$SRC/app/main.py" "$SRC/app/clock.py" "$SRC/app/requirements.txt" \
             "$SRC/app/remote.html" "$SRC/app/remote-manifest.json" "$SRC/app/tts-voices.json" \
             "$SRC/app/remote-icon-192.png" "$SRC/app/remote-icon-512.png" "$INSTALL_DIR/"
+    sudo cp -r "$SRC/app/remote" "$INSTALL_DIR/"
     [ -f "$SRC/app/notification.mp3" ] && sudo cp "$SRC/app/notification.mp3" "$INSTALL_DIR/"
 else
     info "app already in place (installing into the checkout)"
@@ -351,6 +353,14 @@ sudo systemctl enable --now net-watchdog.timer   >/dev/null 2>&1 || warn "watchd
 sudo systemctl enable kiosk-restore.service      >/dev/null 2>&1 || true
 sudo systemctl enable --now kiosk-output.timer   >/dev/null 2>&1 || warn "output watcher failed to start"
 sudo systemctl enable --now kiosk-pkg-update.timer >/dev/null 2>&1 || warn "pkg update timer failed to start"
+if [ "${REMOTE:-1}" = "1" ]; then
+    # Пульт HAOBO: конфиг с ключами живёт вне репозитория; на первой установке
+    # кладём пример, дальше никогда не перетираем.
+    [ -f "$INSTALL_DIR/remote/config.json" ] \
+        || sudo -u "$KIOSK_USER" cp "$INSTALL_DIR/remote/config.example.json" "$INSTALL_DIR/remote/config.json"
+    sudo systemctl enable --now remote-server.service   >/dev/null 2>&1 || warn "remote-server failed to start"
+    sudo systemctl enable --now remote-listener.service >/dev/null 2>&1 || true
+fi
 if [ "${SCHEDULE:-0}" = "1" ]; then
     sudo systemctl enable --now kiosk-display-off.timer >/dev/null 2>&1 || warn "panel off timer failed"
     sudo systemctl enable --now kiosk-display-on.timer  >/dev/null 2>&1 || warn "panel on timer failed"

@@ -309,6 +309,7 @@
 
 <div class="card links">
   <h2>Ссылки</h2>
+  <a href="#" id="remote-ctl-link" target="_blank">Пульт HAOBO — настройка кнопок и голосового ассистента</a>
   <a href="/docs" target="_blank">Swagger — вся документация API, можно дёргать кнопками</a>
   <a href="/" target="_blank">Список всех эндпоинтов (JSON)</a>
   <a href="/surface/health" target="_blank">Health — состояние киоска одним JSON</a>
@@ -321,6 +322,7 @@
 
 <script>
   document.getElementById('host').textContent = location.hostname;
+  document.getElementById('remote-ctl-link').href = 'http://' + location.hostname + ':5050';
 
   const DAYS = [
     ['mon', 'Пн'], ['tue', 'Вт'], ['wed', 'Ср'], ['thu', 'Чт'],

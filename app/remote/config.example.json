@@ -1,0 +1,289 @@
+{
+  "0": {
+    "longpress": {
+      "actions": [
+        {
+          "command": "sudo reboot",
+          "type": "bash"
+        }
+      ],
+      "seconds": 3
+    }
+  },
+  "1": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/play-preset/1"
+      }
+    ]
+  },
+  "2": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/play-preset/2"
+      }
+    ]
+  },
+  "3": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/play-preset/3"
+      }
+    ]
+  },
+  "4": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/play-preset/4"
+      }
+    ]
+  },
+  "5": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/play-preset/5"
+      }
+    ]
+  },
+  "6": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/play-preset/6"
+      }
+    ]
+  },
+  "_voice": {
+    "audio_device": "plughw:0,0",
+    "claude_api_key": "",
+    "claude_model": "claude-haiku-4-5-20251001",
+    "commands": [
+      {
+        "description": "music",
+        "name": "music",
+        "url": "http://192.168.1.95:8241/api/play/random-playlist"
+      },
+      {
+        "description": "photo, poze, фотографии, dashboard",
+        "name": "test",
+        "url": "http://192.168.1.95:8888/surface/combo"
+      },
+      {
+        "description": "chill, linistit, calm",
+        "name": "Chill",
+        "url": "http://192.168.1.95:8241/api/play/music-playlist/chill"
+      },
+      {
+        "description": "tidal, favorite, loved, muzica favorita, muzica iubita, muzica aleasa",
+        "name": "All favorites",
+        "url": "http://192.168.1.95:8241/api/play/favorites"
+      },
+      {
+        "description": "rock, muzica rock, pune ceva rock",
+        "name": "Rock",
+        "url": "http://192.168.1.95:8241/api/play/music-playlist/rock"
+      }
+    ],
+    "enabled": true,
+    "language": "ro",
+    "openai_api_key": "",
+    "openai_model": "gpt-4o-mini",
+    "provider": "openai",
+    "whisper_model": "base"
+  },
+  "back": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/play/favorites/tracks"
+      }
+    ]
+  },
+  "ch+": {
+    "longpress": {
+      "actions": [
+        {
+          "type": "get",
+          "url": "http://192.168.1.95:8241/api/play/radio-playlist/chill"
+        }
+      ],
+      "seconds": 3
+    },
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/play/radio-playlist/liked"
+      }
+    ]
+  },
+  "ch-": {
+    "longpress": {
+      "actions": [
+        {
+          "type": "get",
+          "url": "http://192.168.1.95:8241/api/play/radio-playlist/club"
+        }
+      ],
+      "seconds": 3
+    },
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/play/radio-playlist/favorites"
+      }
+    ]
+  },
+  "down": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/volume-adjust/-2"
+      }
+    ]
+  },
+  "home": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/play/favorites"
+      }
+    ]
+  },
+  "left": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/prev"
+      }
+    ]
+  },
+  "mute": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/mute"
+      }
+    ]
+  },
+  "next": {
+    "longpress": {
+      "actions": [
+        {
+          "type": "get",
+          "url": "http://192.168.1.95:8241/api/now-playing/seek-relative/45"
+        }
+      ],
+      "seconds": 1
+    },
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/now-playing/seek-relative/15"
+      }
+    ]
+  },
+  "ok": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/toggle"
+      }
+    ]
+  },
+  "power": {
+    "longpress": {
+      "actions": [
+        {
+          "type": "get",
+          "url": "http://192.168.1.95:8888/surface/kill-all"
+        },
+        {
+          "seconds": 1,
+          "type": "pause"
+        },
+        {
+          "type": "get",
+          "url": "http://192.168.1.95:8888/surface/display-off"
+        }
+      ],
+      "seconds": 3
+    },
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8888/surface/combo"
+      }
+    ]
+  },
+  "prev": {
+    "longpress": {
+      "actions": [
+        {
+          "type": "get",
+          "url": "http://192.168.1.95:8241/api/now-playing/seek-relative/-45"
+        }
+      ],
+      "seconds": 1
+    },
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/now-playing/seek-relative/-15"
+      }
+    ]
+  },
+  "right": {
+    "longpress": {
+      "actions": [
+        {
+          "type": "get",
+          "url": "http://192.168.1.95:8241/api/now-playing/seek-relative/30"
+        }
+      ],
+      "seconds": 0.5
+    },
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/next"
+      }
+    ]
+  },
+  "up": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/volume-adjust/+2"
+      }
+    ]
+  },
+  "voice": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/now-playing/favorite-current"
+      }
+    ]
+  },
+  "vol+": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/volume-up"
+      }
+    ]
+  },
+  "vol-": {
+    "press": [
+      {
+        "type": "get",
+        "url": "http://192.168.1.95:8241/api/wiim-control/playback/volume-down"
+      }
+    ]
+  }
+}

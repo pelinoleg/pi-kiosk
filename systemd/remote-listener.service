@@ -1,0 +1,20 @@
+[Unit]
+Description=Remote Control USB listener (grabs the HAOBO dongle)
+After=remote-server.service
+Requires=remote-server.service
+
+[Service]
+Type=simple
+# root: exclusive grab of input devices needs it
+User=root
+WorkingDirectory=__INSTALL_DIR__/remote
+Environment="REMOTE_PORT=5050"
+EnvironmentFile=-/etc/kiosk/kiosk.env
+ExecStart=__INSTALL_DIR__/.venv/bin/python remote.py
+Restart=always
+# The listener exits when the dongle is not plugged into this box; a slow
+# retry keeps journal noise down and still picks the dongle up within 30s.
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

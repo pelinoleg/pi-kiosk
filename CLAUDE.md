@@ -431,6 +431,17 @@ TTS (Wavenet/Chirp3-HD, ro+es), OpenAI TTS, кеш, серверные наст�
 
 Копия старого кода: `/home/oleg/tts-from-3b` на pi4 (не в репозитории).
 
+**Remote (пульт HAOBO) тоже перенесён** (в `app/remote/`, юниты
+`remote-server`/`remote-listener`, ставится установщиком, `REMOTE=0`
+отключает). Это Flask на :5050 (**5000 на киоске занят shairport-sync** —
+порт вынесен в `REMOTE_PORT`) + evdev-слушатель USB-донгла от root.
+Кнопки пульта маплятся на HTTP-действия (музыка WiiM через NAS :8241, киоск),
+кнопка DEL — голосовой ассистент (arecord → Whisper → LLM). Конфиг
+`app/remote/config.json` содержит ключи Anthropic/OpenAI — **в git не
+коммитить** (в .gitignore, в репозитории только config.example.json без
+ключей). Донгл физически в 3B; слушатель на pi4 перезапускается каждые 30с
+и подхватит донгл, когда его переткнут.
+
 **Инвентаризация 3B** (по просьбе Олега): кроме киоска и TTS там живут
 `remote-server`+`remote-listener` (самодельный «Remote Control» в `~/remote`),
 стрим CSI-камеры (`csi-stream.sh` → rpicam-vid → /dev/video10, медиа в
