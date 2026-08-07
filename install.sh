@@ -84,11 +84,11 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     xserver-xorg x11-xserver-utils xinit openbox unclutter \
     chromium \
     python3 python3-venv python3-pip python3-pyqt5 \
-    mpv ffmpeg mpg123 pulseaudio alsa-utils \
+    mpv ffmpeg mpg123 pulseaudio alsa-utils espeak-ng \
     network-manager curl wget git socat scrot \
     >/dev/null || die "Package installation failed."
 # python3-pyqt5: часы (clock.py) рисуются системным python — PyQt5 не в venv.
-# scrot: эндпоинт /surface/screenshot.
+# scrot: эндпоинт /surface/screenshot. espeak-ng: офлайн-фоллбек tts-say.
 
 # Raspberry Pi OS ships chromium; plain Debian calls it chromium-browser. Make
 # sure at least one of them exists, and that /usr/bin/chromium resolves.
@@ -348,6 +348,7 @@ sudo systemctl enable --now surface-api.service  >/dev/null 2>&1 || warn "surfac
 sudo systemctl enable --now net-watchdog.timer   >/dev/null 2>&1 || warn "watchdog timer failed to start"
 sudo systemctl enable kiosk-restore.service      >/dev/null 2>&1 || true
 sudo systemctl enable --now kiosk-output.timer   >/dev/null 2>&1 || warn "output watcher failed to start"
+sudo systemctl enable --now kiosk-pkg-update.timer >/dev/null 2>&1 || warn "pkg update timer failed to start"
 if [ "${SCHEDULE:-0}" = "1" ]; then
     sudo systemctl enable --now kiosk-display-off.timer >/dev/null 2>&1 || warn "panel off timer failed"
     sudo systemctl enable --now kiosk-display-on.timer  >/dev/null 2>&1 || warn "panel on timer failed"

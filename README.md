@@ -257,7 +257,7 @@ curl "http://<ip>:7000/surface/chrome-tabs?urls=http://a/&urls=http://b/&times=6
 
 | Эндпоинт | Что делает |
 |---|---|
-| `GET /surface/play?url=...&volume=100&loop=true&fullscreen=true` | видео/поток через MPV; YouTube-ссылки понимает, одиночное видео превращает в «радио» |
+| `GET /surface/play?url=...&volume=100&loop=true&fullscreen=true` | видео/поток через MPV; YouTube-ссылки понимает, одиночное видео превращает в «радио». YouTube живёт на `yt-dlp` из venv — `kiosk-pkg-update.timer` обновляет его еженедельно, иначе YouTube ломается за пару месяцев |
 | `GET /surface/immich/album?ip=<nas>&api_key=<key>&album_id=<id>&limit=50&shuffle=true` | плейлист видео из альбома Immich через MPV |
 | `GET /surface/webcam` | публичная камера пляжа Бадалоны с температурой моря (дефолты); своя камера — параметрами `url`, `usr`, `pwd`, `refresh_rate`, `location`, `show_temp`, `weather_key`, `weather_query` |
 | `GET /surface/kill-all` | убрать с экрана всё: браузер и плеер |
@@ -290,9 +290,11 @@ curl "http://<ip>:7000/surface/chrome-tabs?urls=http://a/&urls=http://b/&times=6
 | `GET /surface/toggle-mute` | вкл/выкл звук |
 | `GET /surface/audio-outputs` | список аудиовыходов |
 | `GET /surface/set-audio-output/{sink}` | переключить аудиовыход |
+| `GET /surface/tts-say?text=...&volume=90&lang=ru` | **произнести напечатанный текст**: голос Google (gTTS), офлайн-фоллбек espeak-ng |
 | `POST /surface/tts-play-upload` | проиграть загруженный аудиофайл (multipart: `audio_file`, опционально `main_volume`, `play_notification`, `notification_volume`, `delay_after_notification`) — для голосовых уведомлений из n8n |
 
 ```bash
+curl -G "http://<ip>:7000/surface/tts-say" --data-urlencode "text=Обед готов"
 curl -F "audio_file=@speech.mp3" -F "main_volume=90" \
   "http://<ip>:7000/surface/tts-play-upload"
 ```
@@ -329,6 +331,8 @@ curl -F "audio_file=@speech.mp3" -F "main_volume=90" \
 |---|---|
 | `GET /surface/quiet-state` | конфиг + активно ли тихое окно сейчас |
 | `POST /surface/quiet-config` | сохранить конфиг: `{"enabled": true, "days": {"mon": {"enabled": true, "start": "23:00", "end": "08:00"}, ...}}` |
+| `GET /surface/quiet-force-on` | **тихо прямо сейчас**: экран гаснет немедленно, тишина до явной отмены — даже вне расписания |
+| `GET /surface/quiet-force-off` | вернуть экран немедленно; внутри ночного окна — пауза до конца окна, следующей ночью тишина вернётся сама |
 
 ### Диагностика и система
 

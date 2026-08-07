@@ -5,3 +5,8 @@ requests
 psutil
 # UploadFile/Form endpoints (TTS upload) fail at import time without this.
 python-multipart
+# tts-say: голос Google, офлайн-фоллбек — системный espeak-ng.
+gTTS
+# YouTube для mpv. Протухает за месяцы — kiosk-pkg-update.timer обновляет
+# его еженедельно; апт-версия на год старше и потому не используется.
+yt-dlp

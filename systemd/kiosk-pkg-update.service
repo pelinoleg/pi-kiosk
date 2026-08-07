@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh fast-moving packages (yt-dlp, gTTS)
+# yt-dlp goes stale within months as YouTube changes its player; a stale one
+# is the number one reason "YouTube stopped working" on a box like this.
+
+[Service]
+Type=oneshot
+User=__USER__
+ExecStart=__INSTALL_DIR__/.venv/bin/pip install --quiet --upgrade yt-dlp gTTS

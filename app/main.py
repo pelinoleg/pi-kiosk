@@ -17,6 +17,7 @@ import random
 import requests
 import tempfile
 import threading
+import shlex
 
 
 def _detect_display_output() -> str:
@@ -525,24 +526,23 @@ def _hhmm_to_minutes(value):
     return hours * 60 + minutes
 
 
-def quiet_now(cfg: dict = None) -> bool:
-    """Активно ли сейчас тихое окно"""
-    cfg = cfg if cfg is not None else load_quiet_config()
+def _quiet_window(cfg: dict, day_index: int):
+    day = cfg.get("days", {}).get(QUIET_DAYS[day_index])
+    if not day or not day.get("enabled", True):
+        return None
+    start, end = _hhmm_to_minutes(day.get("start")), _hhmm_to_minutes(day.get("end"))
+    if start is None or end is None or start == end:
+        return None
+    return start, end
+
+
+def _schedule_quiet_now(cfg: dict) -> bool:
+    """Тихо ли сейчас по расписанию (без учёта ручных переопределений)"""
     if not cfg.get("enabled"):
         return False
     now = time.localtime()
     minutes = now.tm_hour * 60 + now.tm_min
-
-    def window(day_index):
-        day = cfg.get("days", {}).get(QUIET_DAYS[day_index])
-        if not day or not day.get("enabled", True):
-            return None
-        start, end = _hhmm_to_minutes(day.get("start")), _hhmm_to_minutes(day.get("end"))
-        if start is None or end is None or start == end:
-            return None
-        return start, end
-
-    today = window(now.tm_wday)
+    today = _quiet_window(cfg, now.tm_wday)
     if today:
         start, end = today
         if start < end:
@@ -550,12 +550,71 @@ def quiet_now(cfg: dict = None) -> bool:
                 return True
         elif minutes >= start:  # окно через полночь, вечерняя половина
             return True
-    yesterday = window((now.tm_wday - 1) % 7)
+    yesterday = _quiet_window(cfg, (now.tm_wday - 1) % 7)
     if yesterday:
         start, end = yesterday
         if start > end and minutes < end:  # утренняя половина вчерашнего окна
             return True
     return False
+
+
+def _active_window_end_epoch(cfg: dict):
+    """Момент окончания текущего тихого окна (epoch), если оно активно"""
+    now = time.localtime()
+    minutes = now.tm_hour * 60 + now.tm_min
+    midnight = time.mktime(now[:3] + (0, 0, 0) + now[6:])
+    today = _quiet_window(cfg, now.tm_wday)
+    if today:
+        start, end = today
+        if start < end and start <= minutes < end:
+            return midnight + end * 60
+        if start > end and minutes >= start:
+            return midnight + 86400 + end * 60
+    yesterday = _quiet_window(cfg, (now.tm_wday - 1) % 7)
+    if yesterday:
+        start, end = yesterday
+        if start > end and minutes < end:
+            return midnight + end * 60
+    return None
+
+
+def quiet_now(cfg: dict = None) -> bool:
+    """Активно ли сейчас тихое окно, с учётом ручных переопределений.
+
+    override в конфиге: {"mode": "quiet"} — тихо прямо сейчас, до отмены,
+    даже вне расписания; {"mode": "awake", "until": epoch} — пауза тишины
+    до конца текущего окна, даже внутри расписания.
+    """
+    cfg = cfg if cfg is not None else load_quiet_config()
+    override = cfg.get("override") or {}
+    if override.get("mode") == "quiet":
+        return True
+    if override.get("mode") == "awake" and time.time() < override.get("until", 0):
+        return False
+    return _schedule_quiet_now(cfg)
+
+
+def _save_quiet_config(cfg: dict):
+    with open(QUIET_CONFIG_FILE, "w") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+
+
+def _darken_now():
+    """Погасить экран немедленно, пометив это тишиной"""
+    try:
+        with open(DISPLAY_OFF_FLAG, "w") as f:
+            f.write(_QUIET_MARK + "\n")
+    except OSError:
+        pass
+    run_command(f"export DISPLAY=:0 && xrandr --output {DISPLAY_OUTPUT} --off")
+
+
+def _wake_and_restore():
+    """Включить экран немедленно и вернуть киоск"""
+    set_display_off_flag(False)
+    run_command(f"export DISPLAY=:0 && xset s off && xset s noblank "
+                f"&& xrandr --output {DISPLAY_OUTPUT} --auto")
+    _airplay_restore_kiosk()
 
 
 def ensure_not_quiet():
@@ -570,15 +629,19 @@ def ensure_not_quiet():
 
 @app.get("/surface/quiet-state")
 async def quiet_state():
-    """Состояние режима тишины: конфиг и активно ли тихое окно сейчас"""
+    """Состояние режима тишины: конфиг, переопределение и тихо ли сейчас"""
     cfg = load_quiet_config()
+    override = cfg.get("override") or {}
+    if override.get("mode") == "awake" and time.time() >= override.get("until", 0):
+        override = {}  # просроченная пауза — не показывать
     return {"enabled": cfg.get("enabled", False), "quiet_now": quiet_now(cfg),
-            "days": cfg.get("days", {})}
+            "schedule_quiet_now": _schedule_quiet_now(cfg),
+            "override": override or None, "days": cfg.get("days", {})}
 
 
 @app.post("/surface/quiet-config")
 async def quiet_config(cfg: QuietConfig):
-    """Сохранение конфига режима тишины"""
+    """Сохранение конфига режима тишины (сбрасывает ручные переопределения)"""
     for name, day in cfg.days.items():
         if name not in QUIET_DAYS:
             raise HTTPException(status_code=400, detail=f"Неизвестный день: {name}")
@@ -586,13 +649,50 @@ async def quiet_config(cfg: QuietConfig):
             raise HTTPException(status_code=400, detail=f"{name}: время должно быть HH:MM")
     data = cfg.dict()
     try:
-        with open(QUIET_CONFIG_FILE, "w") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        _save_quiet_config(data)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Не удалось сохранить конфиг: {e}")
     logger.info(f"Режим тишины: конфиг обновлён, enabled={data['enabled']}")
     return {"message": "Сохранено", "enabled": data["enabled"], "quiet_now": quiet_now(data),
             "days": data["days"]}
+
+
+@app.get("/surface/quiet-force-on")
+async def quiet_force_on():
+    """Тихо прямо сейчас: экран гаснет немедленно, до явной отмены"""
+    cfg = load_quiet_config()
+    cfg["override"] = {"mode": "quiet", "since": int(time.time())}
+    try:
+        _save_quiet_config(cfg)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось сохранить: {e}")
+    _darken_now()
+    logger.info("Режим тишины: включён вручную, экран погашен")
+    return {"message": "Тишина: экран погашен, всё игнорируется до отмены",
+            "quiet_now": True}
+
+
+@app.get("/surface/quiet-force-off")
+async def quiet_force_off():
+    """Отменить тишину сейчас: экран и киоск возвращаются немедленно.
+
+    Внутри расписанного окна это пауза до конца окна — ночью тишина
+    вернётся сама. Вне расписания просто снимает ручную тишину.
+    """
+    cfg = load_quiet_config()
+    cfg["override"] = None
+    if _schedule_quiet_now(cfg):
+        until = _active_window_end_epoch(cfg) or (time.time() + 3600)
+        cfg["override"] = {"mode": "awake", "until": int(until)}
+    try:
+        _save_quiet_config(cfg)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Не удалось сохранить: {e}")
+    _wake_and_restore()
+    logger.info("Режим тишины: отменён вручную, экран возвращается")
+    return {"message": "Тишина снята, киоск возвращается на экран",
+            "quiet_now": False,
+            "paused_until": cfg["override"]["until"] if cfg.get("override") else None}
 
 
 def _display_is_on() -> bool:
@@ -1252,6 +1352,45 @@ async def custom_command_get(command: str = Query(...)):
         "stderr": result["stderr"],
         "exit_code": result["exit_code"]
     }
+
+
+@app.get("/surface/tts-say")
+async def tts_say(
+        text: str = Query(..., min_length=1, max_length=500, description="Текст для озвучки"),
+        volume: int = Query(90, ge=0, le=150, description="Громкость воспроизведения"),
+        lang: str = Query("ru", description="Язык (ru, en, es, ...)"),
+        notification: bool = Query(True, description="Сигнал перед речью"),
+):
+    """Произнести напечатанный текст на киоске.
+
+    Синтез — gTTS (голос Google, нужен интернет); если он недоступен,
+    офлайн-фоллбек espeak-ng: звучит роботом, но объявление донесёт.
+    """
+    ensure_not_quiet()
+    run_command(f"amixer -D pulse sset Master {volume}%")
+    if notification and os.path.exists(NOTIFICATION_FILE):
+        run_command(f"mpg123 -q {NOTIFICATION_FILE}")
+
+    stamp = int(time.time())
+    audio_path = f"/tmp/tts_say_{stamp}.mp3"
+    engine = None
+    try:
+        from gtts import gTTS
+        gTTS(text=text, lang=lang).save(audio_path)
+        engine = "gtts"
+    except Exception as e:
+        logger.warning(f"gTTS не сработал ({e}), пробую espeak-ng")
+        audio_path = f"/tmp/tts_say_{stamp}.wav"
+        result = run_command(f"espeak-ng -v {lang} -s 145 -w {audio_path} {shlex.quote(text)}")
+        if not result["success"]:
+            raise HTTPException(status_code=500,
+                                detail=f"Ни gTTS, ни espeak-ng не сработали: {result['stderr'].strip()}")
+        engine = "espeak-ng"
+
+    player = "mpg123 -q" if audio_path.endswith(".mp3") else "paplay"
+    spawn(f"{player} {audio_path}; rm -f {audio_path}")
+    return {"message": "Произношу", "engine": engine, "text": text,
+            "volume": volume, "lang": lang}
 
 
 @app.post("/surface/tts-play-upload")

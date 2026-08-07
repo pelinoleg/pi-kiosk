@@ -115,6 +115,15 @@
     восстановления игнорируются. После окна киоск возвращается сам.
     Окно через полночь — нормально (23:00 → 08:00).
   </div>
+  <div class="row" style="margin-bottom:10px">
+    <button class="danger" onclick="call('/surface/quiet-force-on', 'Тишина: экран погашен')">Тихо прямо сейчас</button>
+    <button onclick="call('/surface/quiet-force-off', 'Тишина снята, киоск возвращается')">Вернуть экран сейчас</button>
+  </div>
+  <div class="muted" style="margin-bottom:10px">
+    «Тихо прямо сейчас» гасит экран немедленно и держит тишину до отмены,
+    даже вне расписания. «Вернуть экран сейчас» внутри ночного окна — пауза
+    до конца окна: следующей ночью тишина вернётся сама.
+  </div>
   <div id="q-days"></div>
   <div class="row" style="margin-top:8px">
     <button class="primary wide" onclick="saveQuiet(true)">Сохранить расписание</button>
@@ -152,7 +161,33 @@
 </div>
 
 <div class="card">
+  <h2>Видео на экран</h2>
+  <div class="row">
+    <input type="text" id="play-url" placeholder="YouTube или прямая ссылка…" style="flex:1 1 100%">
+  </div>
+  <div class="row" style="margin-top:8px; align-items:center">
+    <span class="muted">Громкость</span>
+    <input type="number" id="play-vol" value="100" min="0" max="150" style="width:70px">
+    <label class="muted" style="display:flex;align-items:center;gap:6px">
+      <input type="checkbox" id="play-loop" checked> повторять
+    </label>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="primary wide" onclick="playUrl()">Отправить на экран</button>
+    <button onclick="call('/surface/webcam', 'Камера Бадалоны на экране')">Камера Бадалоны</button>
+    <button onclick="call('/surface/kill-all', 'Остановлено')">Стоп</button>
+  </div>
+</div>
+
+<div class="card">
   <h2>Объявление (TTS)</h2>
+  <div class="row">
+    <input type="text" id="tts-text" placeholder="Напечатай, что сказать…" style="flex:1 1 100%">
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button class="primary wide" onclick="sayText()">Произнести на киоске</button>
+  </div>
+  <div class="muted" style="margin:6px 0 10px">…или отправить готовый аудиофайл:</div>
   <label class="file" for="tts-file" id="tts-label">Выбрать аудиофайл…</label>
   <input type="file" id="tts-file" accept="audio/*" style="display:none"
          onchange="document.getElementById('tts-label').textContent = this.files[0]?.name || 'Выбрать аудиофайл…'">
@@ -333,6 +368,24 @@
     }
   }
 
+  async function playUrl() {
+    const url = document.getElementById('play-url').value.trim();
+    if (!url) { toast('Вставь ссылку на видео', true); return; }
+    const vol = document.getElementById('play-vol').value;
+    const loop = document.getElementById('play-loop').checked;
+    call('/surface/play?url=' + encodeURIComponent(url) + '&volume=' + vol + '&loop=' + loop,
+         'Запускаю видео…');
+  }
+
+  async function sayText() {
+    const text = document.getElementById('tts-text').value.trim();
+    if (!text) { toast('Напечатай текст', true); return; }
+    const vol = document.getElementById('tts-vol').value;
+    const ding = document.getElementById('tts-ding').checked;
+    call('/surface/tts-say?text=' + encodeURIComponent(text) +
+         '&volume=' + vol + '&notification=' + ding, 'Произношу…');
+  }
+
   async function playTts() {
     const file = document.getElementById('tts-file').files[0];
     if (!file) { toast('Сначала выбери аудиофайл', true); return; }
@@ -413,6 +466,8 @@
 
   function showQuietBadge(q) {
     const el = document.getElementById('quiet-badge');
+    if (q.override && q.override.mode === 'quiet') { el.innerHTML = pill('тихо: вручную', 'warn'); return; }
+    if (q.override && q.override.mode === 'awake') { el.innerHTML = pill('тишина на паузе', 'ok'); return; }
     if (!q.enabled) { el.innerHTML = ''; return; }
     el.innerHTML = q.quiet_now
       ? pill('тихое окно', 'warn')
