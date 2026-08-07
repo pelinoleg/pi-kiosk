@@ -1611,6 +1611,7 @@ async def tts_say(
         voice: str = Query(None, description="Голос (для google/openai), иначе из настроек"),
         volume: int = Query(None, ge=0, le=150, description="Громкость речи, иначе из настроек"),
         notification: bool = Query(None, description="Сигнал перед речью, иначе из настроек"),
+        speed: float = Query(None, ge=0.25, le=4.0, description="Скорость речи, иначе из настроек"),
         slow: bool = Query(False, description="Медленная речь (gtts/espeak)"),
 ):
     """Произнести текст на киоске.
@@ -1623,6 +1624,9 @@ async def tts_say(
     settings = load_tts_settings()
     volume = settings["volume"] if volume is None else volume
     notification = settings["notification_enabled"] if notification is None else notification
+    if speed is not None:
+        settings = {**settings, "google_speed": speed, "openai_speed": speed}
+        slow = slow or speed < 0.9  # для gtts/espeak, у которых скорость двоичная
 
     if engine == "auto":
         chain = (["google"] if GOOGLE_TTS_API_KEY else []) + ["gtts", "espeak"]
@@ -1658,6 +1662,41 @@ async def tts_say(
             errors.append(f"{eng}: {e}")
             logger.warning(f"TTS {eng} не сработал: {e}")
     raise HTTPException(status_code=502, detail="; ".join(errors))
+
+
+@app.get("/tts/google")
+async def tts_google_compat(
+        text: str = Query(..., description="Текст для озвучивания"),
+        lang: str = Query("ro", description="Язык"),
+        volume: float = Query(None, ge=0.0, le=2.0, description="Громкость 0.0-1.0 (старая шкала)"),
+        notification_enabled: bool = Query(None),
+        voice: str = Query(None),
+        speed: float = Query(None, ge=0.25, le=4.0),
+):
+    """Совместимость со старым TTS-сервером с 3B (порт 8000): тот же путь и
+    параметры — в автоматизациях достаточно поменять адрес на
+    http://<киоск>:7000/tts/google"""
+    return await tts_say(
+        text=text, lang=lang, engine="google", voice=voice,
+        volume=None if volume is None else round(volume * 100),
+        notification=notification_enabled, speed=speed, slow=False,
+    )
+
+
+@app.get("/tts/openai")
+async def tts_openai_compat(
+        text: str = Query(..., description="Текст для озвучивания"),
+        volume: float = Query(None, ge=0.0, le=2.0),
+        notification_enabled: bool = Query(None),
+        voice: str = Query(None),
+        speed: float = Query(None, ge=0.25, le=4.0),
+):
+    """Совместимость со старым TTS-сервером с 3B: OpenAI-движок"""
+    return await tts_say(
+        text=text, lang="ro", engine="openai", voice=voice,
+        volume=None if volume is None else round(volume * 100),
+        notification=notification_enabled, speed=speed, slow=False,
+    )
 
 
 @app.get("/surface/tts-voices")

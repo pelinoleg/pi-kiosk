@@ -329,6 +329,9 @@ if [ -n "$UFW" ] && sudo "$UFW" status 2>/dev/null | grep -q '^Status: active'; 
     info "opening ports in ufw"
     sudo "$UFW" allow "${API_PORT}/tcp" >/dev/null 2>&1
     sudo "$UFW" allow 5353/udp >/dev/null 2>&1        # mDNS, for AirPlay discovery
+    if [ "${REMOTE:-1}" = "1" ]; then
+        sudo "$UFW" allow "${REMOTE_PORT:-5050}/tcp" >/dev/null 2>&1  # HAOBO remote UI
+    fi
     if [ "${AIRPLAY_INSTALLED:-0}" = "1" ]; then
         P="${AIRPLAY_VIDEO_PORT:-35000}"
         sudo "$UFW" allow "${P}:$((P + 2))/tcp" >/dev/null 2>&1

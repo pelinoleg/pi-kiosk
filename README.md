@@ -307,6 +307,11 @@ HD-голосов нужен ключ Google Cloud TTS в `/etc/kiosk/kiosk.env`
 (`GOOGLE_TTS_API_KEY`); без ключа — обычный голос gTTS, без интернета —
 espeak-ng. `OPENAI_API_KEY` включает `engine=openai`.
 
+Совместимость со старым TTS-сервером: `GET /tts/google` и `GET /tts/openai`
+принимают старые параметры (`text`, `speed`, `volume` в шкале 0–1,
+`notification_enabled`, `voice`) — в старых автоматизациях достаточно
+заменить `http://<старый-хост>:8000` на `http://<киоск>:7000`.
+
 ### Плеер (MPV)
 
 `playback-status`, `playback-toggle`, `playback-play`, `playback-pause`,
