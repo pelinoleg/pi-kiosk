@@ -293,6 +293,8 @@
       <input type="checkbox" id="tts-ding" checked
              onchange="ttsSet('notification_enabled', this.checked)"> сигнал
     </label>
+    <input type="number" id="tts-ding-vol" class="inp" value="60" min="0" max="150" style="width:56px"
+           title="Громкость сигнала" onchange="ttsSet('notification_volume', parseInt(this.value))">
     <span class="muted">Скорость</span>
     <input type="number" id="tts-speed" class="inp" value="1" min="0.5" max="2" step="0.1" style="width:56px"
            onchange="ttsSet('google_speed', parseFloat(this.value))">
@@ -669,6 +671,7 @@
       ttsSettings = data.settings;
       document.getElementById('tts-vol').value = ttsSettings.volume;
       document.getElementById('tts-ding').checked = ttsSettings.notification_enabled;
+      document.getElementById('tts-ding-vol').value = ttsSettings.notification_volume;
       document.getElementById('tts-speed').value = ttsSettings.google_speed;
       document.getElementById('tts-engine-badge').innerHTML = data.google_key
         ? pill('Google HD', 'ok') : pill('gTTS', 'warn');

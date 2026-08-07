@@ -1879,6 +1879,8 @@ async def tts_say(
         voice: str = Query(None, description="Голос (для google/openai), иначе из настроек"),
         volume: int = Query(None, ge=0, le=150, description="Громкость речи, иначе из настроек"),
         notification: bool = Query(None, description="Сигнал перед речью, иначе из настроек"),
+        notification_volume: int = Query(None, ge=0, le=150,
+                                         description="Громкость сигнала, иначе из настроек"),
         speed: float = Query(None, ge=0.25, le=4.0, description="Скорость речи, иначе из настроек"),
         slow: bool = Query(False, description="Медленная речь (gtts/espeak)"),
         output: str = Query(None, description="Куда играть: bt, usb, hdmi, jack или имя выхода. "
@@ -1895,6 +1897,8 @@ async def tts_say(
     settings = load_tts_settings()
     volume = settings["volume"] if volume is None else volume
     notification = settings["notification_enabled"] if notification is None else notification
+    if notification_volume is None:
+        notification_volume = settings["notification_volume"]
     if speed is not None:
         settings = {**settings, "google_speed": speed, "openai_speed": speed}
         slow = slow or speed < 0.9  # для gtts/espeak, у которых скорость двоичная
@@ -1922,7 +1926,7 @@ async def tts_say(
             else:
                 raise HTTPException(status_code=400, detail=f"Неизвестный движок: {eng}")
             prev = play_announcement(path, volume, notification,
-                                     settings["notification_volume"],
+                                     notification_volume,
                                      settings["pause_duration"], keep, sink=sink)
             return {"message": "Произношу", "engine": eng, "cached": cached,
                     "text": text, "lang": lang, "volume": volume,
@@ -1941,8 +1945,11 @@ async def tts_google_compat(
         lang: str = Query("ro", description="Язык"),
         volume: float = Query(None, ge=0.0, le=2.0, description="Громкость 0.0-1.0 (старая шкала)"),
         notification_enabled: bool = Query(None),
+        notification_volume: float = Query(None, ge=0.0, le=2.0,
+                                           description="Громкость сигнала 0.0-1.0 (старая шкала)"),
         voice: str = Query(None),
         speed: float = Query(None, ge=0.25, le=4.0),
+        output: str = Query(None, description="Куда играть: bt, usb, hdmi, jack"),
 ):
     """Совместимость со старым TTS-сервером с 3B (порт 8000): тот же путь и
     параметры — в автоматизациях достаточно поменять адрес на
@@ -1950,7 +1957,9 @@ async def tts_google_compat(
     return await tts_say(
         text=text, lang=lang, engine="google", voice=voice,
         volume=None if volume is None else round(volume * 100),
-        notification=notification_enabled, speed=speed, slow=False,
+        notification=notification_enabled,
+        notification_volume=None if notification_volume is None else round(notification_volume * 100),
+        speed=speed, slow=False, output=output,
     )
 
 
