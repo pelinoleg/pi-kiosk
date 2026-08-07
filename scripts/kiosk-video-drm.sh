@@ -55,6 +55,16 @@ for fb in /dev/fb*; do
     dd if=/dev/zero of="$fb" bs=1M count=32 2>/dev/null
 done || true
 
+# Играть на том же экране, что выбран в киоске: без явного коннектора mpv
+# берёт первый попавшийся, и видео уезжало на мини-панель, подсвечивая обе.
+ACTIVE=$(cat /var/lib/kiosk/active_output 2>/dev/null)
+case "$ACTIVE" in
+    HDMI-1) DRM_CONN="HDMI-A-1" ;;
+    HDMI-2) DRM_CONN="HDMI-A-2" ;;
+    "")     DRM_CONN="" ;;
+    *)      DRM_CONN="$ACTIVE" ;;
+esac
+
 ARGS=(
     --vo=gpu --gpu-context=drm
     # Аппаратный h264-декодер: в DRM он реально разгружает CPU (в X11 его
@@ -65,9 +75,12 @@ ARGS=(
     --input-ipc-server=/tmp/mpvsocket
     "--ytdl-format=bestvideo[height<=${QUALITY}][fps<=30][vcodec^=avc1]+bestaudio/bestvideo[height<=720][vcodec^=avc1]+bestaudio/best[height<=720]/best"
     "--volume=${VOLUME}"
-    --no-terminal --really-quiet
+    # Не глушить вывод: с --really-quiet любая смерть mpv оставляла пустой
+    # лог и никакой диагностики.
+    --msg-level=all=warn
     --network-timeout=30 --cache=yes --cache-secs=30
 )
+[ -n "$DRM_CONN" ] && ARGS+=("--drm-connector=${DRM_CONN}")
 case "$URL" in
     *list=*) ARGS+=(--ytdl-raw-options=yes-playlist=) ;;
 esac
@@ -91,5 +104,15 @@ if [ "$SHUFFLE" = "1" ]; then
     esac
 fi
 
+START=$(date +%s)
 mpv "${ARGS[@]}" "$URL" > /tmp/mpv_drm.log 2>&1
-log "mpv exited ($?)"
+RC=$?
+# Смерть в первые секунды — почти всегда гонка за DRM/VT при передаче
+# экрана; одна повторная попытка лечит её молча.
+if [ "$RC" -ne 0 ] && [ $(( $(date +%s) - START )) -lt 10 ]; then
+    log "mpv died early (rc=$RC), retrying once"
+    sleep 2
+    mpv "${ARGS[@]}" "$URL" >> /tmp/mpv_drm.log 2>&1
+    RC=$?
+fi
+log "mpv exited ($RC)"

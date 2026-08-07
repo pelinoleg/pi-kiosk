@@ -2761,6 +2761,24 @@ nohup {CHROME_KIOSK_CMD} --app=file://{html_filename} \\
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
 
+@app.get("/surface/webcam-page", tags=["Контент и плеер"])
+def webcam_page(
+        url: str = Query("http://2.136.193.46:8081/cgi-bin/CGIProxy.fcgi"),
+        usr: str = Query("Cnb"),
+        pwd: str = Query("Club@00"),
+        refresh_rate: int = Query(1000),
+        location: str = Query("Badalona"),
+        show_temp: bool = Query(True),
+        weather_key: str = Query("481ef4eeeb9e4e2ebb395728251203"),
+        weather_query: str = Query("41.4333,2.2333"),
+):
+    """Страница вебкамеры как HTML — чтобы вставлять её в ротацию chrome-tabs
+    обычным url (например, на 30 секунд между дашбордами)"""
+    show_temp = show_temp and bool(weather_key)
+    return HTMLResponse(create_webcam_html(url, usr, pwd, refresh_rate, location,
+                                           show_temp, weather_key, weather_query))
+
+
 def create_webcam_html(
         url: str,
         usr: str,

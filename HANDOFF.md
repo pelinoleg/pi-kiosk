@@ -91,6 +91,25 @@ display-off, тишину и kill-all) + автоподхват пустого �
 
 ---
 
+## Свежая установка (Олег планирует переставить систему с нуля)
+
+Порядок, который делает новую машину «тем самым» киоском:
+
+1. Чистая Raspberry Pi OS Lite 64-bit, пользователь oleg, SSH, Wi-Fi.
+2. `curl -fsSL https://raw.githubusercontent.com/pelinoleg/pi-kiosk/main/install.sh | bash`
+   (или из чекаута: `INSTALL_DIR=~/kiosk/app ./install.sh` — см. CLAUDE.md §4).
+3. Распаковать приватный бэкап (лежал `/home/oleg/kiosk-private-backup.tgz`
+   на старом pi4; свежий делает `scripts/kiosk-backup.sh`):
+   `sudo tar xzf kiosk-private-backup.tgz -C / && sudo systemctl restart surface-api bluetooth remote-server`
+   В нём: kiosk.env с ключами (Google TTS, OpenAI), remote/config.json с
+   ключами и маппингом пульта, настройки TTS/тишины/часов, выбор колонки,
+   кеш озвучек (108 шт.), спаренный Bluetooth (JBL Go 3).
+4. Проверить: `/surface/health` — всё active; страница пульта; TTS фразой;
+   AirPlay с iPhone; пульт HAOBO (донгл переткнуть в новую машину).
+5. COMBO_URL уже указывает на pi4 (192.168.1.221) со стороны NAS — если IP
+   новой машины другой, поправить проксю на NAS :8888.
+6. Wayland-эксперимент — ветка `wayland`, см. WAYLAND.md (замеры и план).
+
 ## Где ты сейчас
 
 Ты запущен **на pi4** — это тестовый стенд, он же будущий киоск. Значит:
