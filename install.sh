@@ -46,7 +46,7 @@ command -v apt-get   >/dev/null || die "This targets Debian / Raspberry Pi OS (a
 sudo -n true 2>/dev/null || info "sudo will ask for your password."
 
 KIOSK_USER="${KIOSK_USER:-$USER}"
-KIOSK_HOME=$(getent passwd "$KIOSK_USER" | cut -d: -f6)
+KIOSK_HOME=$(getent passwd "$KIOSK_USER" | cut -d: -f6 || true)
 [ -n "$KIOSK_HOME" ] || die "Cannot resolve home directory for user '$KIOSK_USER'."
 KIOSK_UID=$(id -u "$KIOSK_USER")
 INSTALL_DIR="${INSTALL_DIR:-$KIOSK_HOME/kiosk}"
@@ -58,7 +58,10 @@ info "user=$KIOSK_USER  dir=$INSTALL_DIR  port=$API_PORT"
 # Either we are sitting in a checkout, or we fetch a tarball. A private repo
 # needs a token; the API endpoint accepts one, raw.githubusercontent does too.
 SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")
-if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/app/main.py" ]; then
+# Локальный чекаут — только когда скрипт реально запущен файлом: при
+# curl|bash BASH_SOURCE пуст, $0=bash, и dirname давал '.', из-за чего запуск
+# из каталога с app/main.py молча ставил локальную копию вместо скачанной.
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "$SELF_DIR/install.sh" ] && [ -f "$SELF_DIR/app/main.py" ]; then
     SRC="$SELF_DIR"
     info "installing from local checkout: $SRC"
 else
@@ -83,15 +86,19 @@ info "installing system packages (this is the slow part)"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     xserver-xorg x11-xserver-utils xinit openbox unclutter \
-    chromium \
     python3 python3-venv python3-pip python3-pyqt5 python3-dev \
     mpv ffmpeg mpg123 pulseaudio alsa-utils espeak-ng \
     pulseaudio-module-bluetooth \
-    network-manager curl wget git socat scrot \
+    network-manager curl socat scrot bluez rfkill \
     >/dev/null || die "Package installation failed."
 # python3-pyqt5: часы (clock.py) рисуются системным python — PyQt5 не в venv.
 # scrot: эндпоинт /surface/screenshot. espeak-ng: офлайн-фоллбек tts-say.
-# pulseaudio-module-bluetooth: Bluetooth-колонки (bt-* эндпоинты).
+# pulseaudio-module-bluetooth + bluez + rfkill: Bluetooth-колонки (bt-*).
+# chromium не в общем списке: на чистом Debian пакет зовётся chromium-browser,
+# и провал одного имени не должен ронять всю установку.
+sudo apt-get install -y -qq chromium >/dev/null 2>&1 \
+    || sudo apt-get install -y -qq chromium-browser >/dev/null 2>&1 \
+    || warn "chromium not installed from apt"
 sudo systemctl enable --now bluetooth >/dev/null 2>&1 || true
 sudo rfkill unblock bluetooth 2>/dev/null || true
 
@@ -143,9 +150,16 @@ sudo install -m 0755 "$SRC/scripts/kiosk-output.sh"  /usr/local/bin/kiosk-output
 sudo install -m 0755 "$SRC/scripts/airplay-watch.sh" /usr/local/bin/airplay-watch.sh
 
 # Output switching restarts surface-api, which needs root; grant exactly that.
-sed "s|__USER__|$KIOSK_USER|g" "$SRC/config/sudoers-kiosk" | sudo tee /etc/sudoers.d/kiosk >/dev/null
-sudo chmod 0440 /etc/sudoers.d/kiosk
-sudo visudo -cf /etc/sudoers.d/kiosk >/dev/null 2>&1 || { sudo rm -f /etc/sudoers.d/kiosk; warn "sudoers snippet rejected, dropped it"; }
+# Сначала визудо-проверка временного файла, потом установка: битый файл в
+# /etc/sudoers.d ломает sudo целиком, и откатиться было бы уже нечем.
+SUDOERS_TMP=$(mktemp)
+sed "s|__USER__|$KIOSK_USER|g" "$SRC/config/sudoers-kiosk" > "$SUDOERS_TMP"
+if sudo visudo -cf "$SUDOERS_TMP" >/dev/null 2>&1; then
+    sudo install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/kiosk
+else
+    warn "sudoers snippet rejected, dropped it"
+fi
+rm -f "$SUDOERS_TMP"
 # Backlight files under /sys/class/backlight are owned by root:video, so the
 # panel can be dimmed without sudo once the kiosk user is in that group.
 sudo usermod -aG video "$KIOSK_USER" 2>/dev/null || true
@@ -181,12 +195,19 @@ else
     fi
 
     sudo cp "$SRC/config/kiosk.env.example" /etc/kiosk/kiosk.env
-    sudo sed -i "s|^API_PORT=.*|API_PORT=${API_PORT}|" /etc/kiosk/kiosk.env
-    sudo sed -i "s|^COMBO_URL=.*|COMBO_URL=${COMBO_URL:-}|" /etc/kiosk/kiosk.env
-    sudo sed -i "s|^WIFI_IFACE=.*|WIFI_IFACE=${IFACE}|" /etc/kiosk/kiosk.env
-    sudo sed -i "s|^PROBE_HOSTS=.*|PROBE_HOSTS=\"${PROBE_HOSTS:-$GW}\"|" /etc/kiosk/kiosk.env
-    sudo sed -i "s|^DISPLAY_OFF_AT=.*|DISPLAY_OFF_AT=${DISPLAY_OFF_AT:-}|" /etc/kiosk/kiosk.env
-    sudo sed -i "s|^DISPLAY_ON_AT=.*|DISPLAY_ON_AT=${DISPLAY_ON_AT:-}|" /etc/kiosk/kiosk.env
+    # env_set экранирует & \ | в значении: URL с query-параметрами (&) иначе
+    # молча портил файл, а | ронял sed посреди записи конфига.
+    env_set() {
+        local v
+        v=$(printf '%s' "$2" | sed -e 's/[&\\|]/\\&/g')
+        sudo sed -i "s|^$1=.*|$1=$v|" /etc/kiosk/kiosk.env
+    }
+    env_set API_PORT "${API_PORT}"
+    env_set COMBO_URL "${COMBO_URL:-}"
+    env_set WIFI_IFACE "${IFACE}"
+    env_set PROBE_HOSTS "\"${PROBE_HOSTS:-$GW}\""
+    env_set DISPLAY_OFF_AT "${DISPLAY_OFF_AT:-}"
+    env_set DISPLAY_ON_AT "${DISPLAY_ON_AT:-}"
 fi
 
 info "installing the X session"
@@ -238,9 +259,20 @@ fi
 # A zero-length unit file is reported by systemd as "masked", with no error at
 # all. That is exactly what an unclean shutdown mid-install leaves behind, so
 # verify sizes rather than trusting that the writes landed.
-for u in surface-api.service xinit.service net-watchdog.service net-watchdog.timer kiosk-restore.service; do
+for src in "$SRC"/systemd/*.service "$SRC"/systemd/*.timer; do
+    u=$(basename "$src")
+    # Таймеры расписания могли быть намеренно удалены выше
+    [ -f "/etc/systemd/system/$u" ] || continue
     [ -s "/etc/systemd/system/$u" ] || die "Unit $u came out empty. Disk full, or the box died mid-write."
 done
+
+# journald на Pi часто живёт в tmpfs (log2ram, 128М): лимит журнала обязан
+# быть заметно меньше раздела, иначе журнал съедает всё, а скрипты киоска
+# получают ENOSPC и молча ломаются — ровно сценарий «улики стёрты» из §6.4.
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=64M\n' \
+    | sudo tee /etc/systemd/journald.conf.d/60-kiosk.conf >/dev/null
+sudo systemctl restart systemd-journald 2>/dev/null || true
 
 info "wifi power save off, log rotation, hardware watchdog"
 sudo mkdir -p /etc/NetworkManager/conf.d
@@ -299,17 +331,20 @@ if [ "${AIRPLAY:-1}" = "1" ]; then
 
     if command -v uxplay >/dev/null; then
         # Discovery is mDNS; without Avahi the device simply never appears on iOS.
-        sudo systemctl enable --now avahi-daemon >/dev/null 2>&1
+        sudo systemctl enable --now avahi-daemon >/dev/null 2>&1 || warn "avahi-daemon failed to start"
         # The packaged unit runs as its own user against ALSA and would fight us
         # for the sound device; ours runs as the kiosk user against PulseAudio.
         sudo systemctl disable --now shairport-sync >/dev/null 2>&1 || true
 
+        AIRPLAY_NAME_SET="${AIRPLAY_NAME:+1}"
         AIRPLAY_NAME="${AIRPLAY_NAME:-$(hostname)}"
         if ! grep -q '^AIRPLAY_NAME=' /etc/kiosk/kiosk.env 2>/dev/null; then
             printf '\nAIRPLAY_NAME=%s\nAIRPLAY_VIDEO_PORT=%s\n' \
                 "$AIRPLAY_NAME" "${AIRPLAY_VIDEO_PORT:-35000}" \
                 | sudo tee -a /etc/kiosk/kiosk.env >/dev/null
-        else
+        elif [ -n "${AIRPLAY_NAME_SET:-}" ]; then
+            # Только если имя задано явно: иначе повторный прогон затирал
+            # вручную вписанное имя обратно на hostname.
             sudo sed -i "s|^AIRPLAY_NAME=.*|AIRPLAY_NAME=${AIRPLAY_NAME}|" /etc/kiosk/kiosk.env
         fi
         AIRPLAY_INSTALLED=1
@@ -331,8 +366,8 @@ done
 
 if [ -n "$UFW" ] && sudo "$UFW" status 2>/dev/null | grep -q '^Status: active'; then
     info "opening ports in ufw"
-    sudo "$UFW" allow "${API_PORT}/tcp" >/dev/null 2>&1
-    sudo "$UFW" allow 5353/udp >/dev/null 2>&1        # mDNS, for AirPlay discovery
+    sudo "$UFW" allow "${API_PORT}/tcp" >/dev/null 2>&1 || true
+    sudo "$UFW" allow 5353/udp >/dev/null 2>&1 || true  # mDNS, for AirPlay discovery
     if [ "${REMOTE:-1}" = "1" ]; then
         sudo "$UFW" allow "${REMOTE_PORT:-5050}/tcp" >/dev/null 2>&1  # HAOBO remote UI
     fi
@@ -366,7 +401,7 @@ if [ "${REMOTE:-1}" = "1" ]; then
     [ -f "$INSTALL_DIR/remote/config.json" ] \
         || sudo -u "$KIOSK_USER" cp "$INSTALL_DIR/remote/config.example.json" "$INSTALL_DIR/remote/config.json"
     sudo systemctl enable --now remote-server.service   >/dev/null 2>&1 || warn "remote-server failed to start"
-    sudo systemctl enable --now remote-listener.service >/dev/null 2>&1 || true
+    sudo systemctl enable --now remote-listener.service >/dev/null 2>&1 || warn "remote-listener failed to start (нет донгла — это нормально, юнит включён)"
 fi
 if [ "${SCHEDULE:-0}" = "1" ]; then
     sudo systemctl enable --now kiosk-display-off.timer >/dev/null 2>&1 || warn "panel off timer failed"
@@ -387,8 +422,9 @@ sync
 echo
 info "verifying"
 ok=1
-CHECK_UNITS="xinit.service surface-api.service net-watchdog.timer"
-[ "${AIRPLAY_INSTALLED:-0}" = "1" ] && CHECK_UNITS="$CHECK_UNITS airplay-video.service airplay-audio.service"
+CHECK_UNITS="xinit.service surface-api.service net-watchdog.timer kiosk-output.timer kiosk-pkg-update.timer bluetooth.service"
+[ "${AIRPLAY_INSTALLED:-0}" = "1" ] && CHECK_UNITS="$CHECK_UNITS airplay-video.service airplay-audio.service airplay-watch.timer"
+[ "${REMOTE:-1}" = "1" ] && CHECK_UNITS="$CHECK_UNITS remote-server.service"
 for u in $CHECK_UNITS; do
     state=$(systemctl is-active "$u" 2>&1 || true)
     printf '  %-24s %s\n' "$u" "$state"

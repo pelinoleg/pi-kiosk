@@ -13,3 +13,6 @@ yt-dlp
 # remote (пульт HAOBO + голосовой ассистент): Flask-сервер и evdev-слушатель.
 flask
 evdev
+# Голос в remote работает через OpenAI API (provider=openai в config.json).
+# Локальный распознаватель не ставим: faster-whisper тяжёл для Pi и нужен
+# только при provider=local — тогда: pip install faster-whisper.

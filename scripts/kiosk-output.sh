@@ -22,6 +22,12 @@ export DISPLAY="${DISPLAY:-:0}"
 STATE=/var/lib/kiosk/active_output
 LOG=/var/log/kiosk.log
 
+# Таймер каждые 30с плюс ручные запуски из API могут пересечься; два
+# экземпляра одновременно дважды переключали выход (видно в логе задвоенными
+# строками). Второй экземпляр просто уходит.
+exec 9>/var/lib/kiosk/output.lock
+flock -n 9 || exit 0
+
 log() {
     printf '%s %s\n' "$(date '+%F %T')" "kiosk-output: $*" >>"$LOG" 2>/dev/null
     logger -t kiosk-output -- "$*" 2>/dev/null || true

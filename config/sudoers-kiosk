@@ -8,3 +8,5 @@ __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl start airplay-video.service air
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl stop airplay-video.service airplay-audio.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart airplay-video.service
 __USER__ ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block kiosk-restore.service
+# The /surface/reboot endpoint; without this it silently does nothing.
+__USER__ ALL=(root) NOPASSWD: /sbin/reboot
