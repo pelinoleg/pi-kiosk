@@ -1197,9 +1197,12 @@ def _bt_keepalive():
                 continue
             if time.time() - last_ping < interval:
                 continue
-            sink = run_command("pactl get-default-sink")["stdout"].strip()
-            if sink.startswith("bluez") and os.path.exists(_SILENCE_WAV):
-                run_command(f"timeout 10 paplay --device={shlex.quote(sink)} {_SILENCE_WAV}")
+            # Пингуем каждую подключённую колонку, а не только дефолтную:
+            # колонка, ждущая своей очереди «в запасе», тоже не должна уснуть.
+            bt_sinks = [s for s in _sink_names() if s.startswith("bluez")]
+            if bt_sinks and os.path.exists(_SILENCE_WAV):
+                for sink in bt_sinks:
+                    run_command(f"timeout 10 paplay --device={shlex.quote(sink)} {_SILENCE_WAV}")
                 last_ping = time.time()
         except Exception as e:
             logger.warning(f"BT keep-alive: {e}")
